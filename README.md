@@ -50,12 +50,16 @@ scripts, home automation, other platforms — instead of only the official app.
   streamed continuously once connected
 - 🔔 **Push notifications to the lens** from any Python script
 - 📜 **Teleprompter control** — open it and load arbitrary text
+- 🔊 **Volume, brightness, WiFi, and standby-widget control**
+- 🔍 **Query any device status** (battery, language, zen mode, WiFi list, ...)
 - 🛠️ **Send any app command** via `send_action()` — the protocol vocabulary is
   fully documented below, so new features (AI assistant, etc.) are a small
   addition, not a new reverse-engineering project
 - 🧪 **Offline self-test suite** — every protocol layer is validated against
   real captured bytes, no hardware required to verify correctness
 - 💬 **Interactive REPL** for driving the glasses live from the terminal
+- 📝 **Two-tier logging** — the console shows connection milestones only; every
+  packet, ACK, and telemetry message is written to `myvu.log` for later review
 
 ## Quick start
 
@@ -79,6 +83,10 @@ myvu> notify Hello from Python!
 myvu> notify Meeting | Standup starts in 5 minutes
 myvu> tici Welcome to my talk.\nFirst point here.
 myvu> hl 1
+myvu> vol 8
+myvu> bright 5
+myvu> wifi off
+myvu> query get_device_info
 myvu> raw {"action":"system","data":{"action":"get_device_info"}}
 ```
 
@@ -86,16 +94,37 @@ myvu> raw {"action":"system","data":{"action":"get_device_info"}}
 |---|---|
 | `notify <text>` | push a notification card to the lens |
 | `notify <title> \| <body>` | notification with a separate title |
-| `tici <text>` | open the teleprompter and load this text |
+| `tici <text>` | open the teleprompter and load this text (`\n` for line breaks) |
 | `hl <index>` | scroll/highlight the teleprompter to paragraph `<index>` |
+| `vol <0-15>` | set the glasses' volume |
+| `bright <value>` | set the glasses' screen brightness |
+| `wifi on\|off` | turn the glasses' own WiFi radio on/off |
+| `standby <0-3>` | set the field-of-view position of the standby widgets (confirmed range) |
+| `fov <n>` | set the field-of-view display position type (meaning unconfirmed) |
+| `query <action>` | send a no-arg status query; reply lands in `myvu.log`, not inline |
 | `raw <json>` | send any raw app-action JSON |
-| `help` / `q` | show help / disconnect and exit |
+| `help` / `q` | show detailed help for every command / disconnect and exit |
+
+Run `help` in the REPL for a longer description of each command, including the
+full list of known `query` action names.
 
 If the glasses were previously paired with a real phone, pass that phone's
 Bluetooth MAC so the glasses recognize the identity:
 
 ```bash
 python run.py <BLE-ADDRESS> --mac 7C:A3:75:D0:94:F1
+```
+
+By default the console only prints connection milestones and your own command
+confirmations — every packet, ACK, and telemetry message (key presses, battery
+stats, event tracking, ...) is written to `myvu.log` instead, so the terminal
+stays readable during a live session:
+
+```bash
+python run.py <BLE-ADDRESS>              # console: milestones only, full detail -> myvu.log
+python run.py <BLE-ADDRESS> --debug      # also mirror full detail to the console
+python run.py <BLE-ADDRESS> --log-file custom.log
+tail -f myvu.log                         # watch full detail live in another terminal
 ```
 
 ## How it works
@@ -209,7 +238,34 @@ StMessage envelope). To **send** commands, the StMessage envelope is
 
 Programmatic API: `client.push_notification(title, content)`,
 `client.open_teleprompter(text)`, `client.teleprompter_highlight(index)`,
+`client.set_volume(value)`, `client.set_brightness(value)`,
+`client.toggle_wifi(enable)`, `client.set_standby_position(0-3)`,
+`client.set_fov_pos_type(value)`, `client.query(action_name)`,
 `client.send_action(json_str, target_pkg=...)`.
+
+Almost every "system"-category command shares one envelope:
+`{"action":"system","data":{"action":"<verb>", ...}}` — `"system"` is just the
+routing tag, the real command is `data.action`. Reverse-engineered verbs, from
+`SuperMessageManger` in the decompiled app:
+
+* **Queries** (no payload, glasses reply async): `get_device_info`,
+  `get_language`, `get_zen_mode`, `get_air_mode`, `get_brightness`,
+  `get_volume_stream_type`, `get_screen_off_time`, `get_wear_detection_mode`,
+  `get_music_tp_control_mode`, `get_fov_pos_type`, `get_standby_position`,
+  `get_standby_widget_lists`, `get_network_valid`, `request_wifi_list`,
+  `request_phone_battery`, `get_glass_log`
+* **Setters**: `set_volume`, `set_brightness`, `set_brightness_finish`,
+  `toggle_wifi`, `set_standby_position` (**confirmed range 0-3**, sets the
+  field-of-view position of the standby widgets while idle),
+  `set_fov_pos_type` (meaning not yet confirmed)
+* **Not user-facing — internal plumbing, don't bother wiring these up**:
+  `system_account`/`account_state` (tells the glasses which Flyme account is
+  logged in), `system_glass_active`/`req_active_state`/`req_active_info` (an
+  internal NPS-survey eligibility check, gated on account login — nothing to
+  do with connection state), `user_feedback` (glasses **asking the phone** to
+  upload diagnostic logs, not something to trigger from here)
+* **`do_recovery`** exists in the code — name suggests a factory-reset/recovery
+  trigger. Not implemented here on purpose; don't send this one.
 
 </details>
 
@@ -261,6 +317,17 @@ identical application protocol wrapped in a small frame:
 This is fully implemented and offline-validated against captured bytes in
 `rfcomm.py`, `rfcomm_client.py`, `run_rfcomm.py`, and `probe_rfcomm.py` — but is
 **not something to casually try**:
+
+**Ruled out as alternatives:** the account/telemetry actions documented in
+[Layer 7](#layer-7--driving-features-applayerpy) (`system_account`,
+`system_glass_active`) were directly tested as possible triggers for clearing
+this message — `send_init_burst()` already replays the *exact* captured
+`system_account` message (real accountId, `value:true`) every run, and the
+prompt persists regardless. Capture analysis backs this up: the classic-BT ACL
+connection completes at **t=43.28s**, a full 11 seconds before the RFCOMM data
+channel or the BLE `system_account` message ever appear (~t=54s) — the classic
+link is established early and independently, not as a reaction to any BLE
+message. The classic-BT/RFCOMM connection remains the far more likely gate.
 
 It requires classic (BR/EDR) Bluetooth bonding first, and attempting that
 bonding **crashed the glasses** (repeated spontaneous reboots) when done via
