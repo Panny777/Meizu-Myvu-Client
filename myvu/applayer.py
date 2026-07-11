@@ -121,6 +121,39 @@ class AppLayerMixin:
             "action": "set_brightness", "value": str(value)}}
         await self.send_action(json.dumps(payload, separators=(",", ":")))
 
+    async def query(self, sub_action: str) -> None:
+        """Send any no-argument 'system' query (e.g. get_device_info,
+        get_language, get_zen_mode, get_air_mode, get_screen_off_time,
+        get_wear_detection_mode, get_music_tp_control_mode, get_network_valid,
+        request_wifi_list, request_phone_battery, get_glass_log,
+        get_standby_widget_lists). The reply lands in myvu.log under the next
+        'GLASSES msg#N' / 'APP <-' line -- there's no synchronous return here."""
+        payload = {"action": "system", "data": {"action": sub_action}}
+        await self.send_action(json.dumps(payload, separators=(",", ":")))
+
+    async def toggle_wifi(self, enable: bool) -> None:
+        """Turn the glasses' own WiFi radio on/off.
+        Matches SuperMessageManger.B0() in the official app."""
+        payload = {"action": "system", "data": {
+            "action": "toggle_wifi", "value": enable}}
+        await self.send_action(json.dumps(payload, separators=(",", ":")))
+
+    async def set_standby_position(self, position: int) -> None:
+        """Set the field-of-view position of the standby widgets shown while
+        the glasses are idle/on standby. Confirmed range: 0-3. Matches
+        SuperMessageManger.v0() in the official app."""
+        payload = {"action": "system", "data": {
+            "action": "set_standby_position", "value": {"standby_position": position}}}
+        await self.send_action(json.dumps(payload, separators=(",", ":")))
+
+    async def set_fov_pos_type(self, value: int) -> None:
+        """Set the field-of-view display position type (enum meaning not
+        reverse-engineered). Matches SuperMessageManger.u0() in the official
+        app."""
+        payload = {"action": "system", "data": {
+            "action": "set_fov_pos_type", "value": {"fov_pos": value}}}
+        await self.send_action(json.dumps(payload, separators=(",", ":")))
+
     # ------------------------------------------------------------- notify
     async def push_notification(self, title: str, content: str,
                                 app_name: str = "ARIA") -> None:

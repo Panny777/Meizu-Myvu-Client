@@ -53,15 +53,64 @@ async def do_scan() -> None:
 
 HELP = """
 commands:
-  notify <text>              push a notification card to the lens
-  notify <title> | <body>    notification with a separate title
-  tici <text>                open the teleprompter with this text
-  hl <index>                 scroll/highlight teleprompter to paragraph <index>
-  vol <0-15>                 set the glasses' volume
-  bright <0-10>              set the glasses' screen brightness
-  raw <json>                 send a raw app-action JSON (to the launcher)
-  help                       show this help
-  quit / q                   disconnect and exit
+
+  notify <text>
+      Push a notification card to the lens with a generic "Notification"
+      title. Confirmed working live: the card actually renders on the
+      display. Example: notify Standup starts in 5 minutes
+
+  notify <title> | <body>
+      Same as above but with your own title. Example:
+      notify Meeting | Standup starts in 5 minutes
+
+  tici <text>
+      Open the teleprompter app on the glasses and load this text as the
+      scrolling script. Use \\n inside <text> for line breaks. Example:
+      tici Welcome to my talk.\\nFirst point here.
+
+  hl <index>
+      Scroll/highlight the currently-open teleprompter to paragraph
+      <index> (0-based). Has no effect unless 'tici' was run first in this
+      session (it tracks the last-opened file key).
+
+  vol <0-15>
+      Set the glasses' audio volume. 0 = silent, 15 = max (matches the
+      range observed in the glasses' own telemetry).
+
+  bright <value>
+      Set the glasses' screen brightness. Observed range is roughly 0-10
+      in telemetry; the exact ceiling isn't confirmed.
+
+  wifi on|off
+      Turn the glasses' own WiFi radio on or off.
+
+  standby <0-3>
+      Set the field-of-view position of the standby widgets shown while
+      the glasses are idle/on standby.
+
+  fov <n>
+      Set the field-of-view display position type (another glasses-side
+      enum with an unconfirmed meaning).
+
+  query <action>
+      Send a no-argument status query and let the glasses answer in the
+      background (the reply shows up in myvu.log, not inline here --
+      tail -f myvu.log to watch it live). Known query names:
+        get_device_info   get_language          get_zen_mode
+        get_air_mode      get_screen_off_time   get_wear_detection_mode
+        get_music_tp_control_mode   get_network_valid   get_glass_log
+        request_wifi_list           request_phone_battery
+        get_standby_widget_lists
+      Example: query get_device_info
+
+  raw <json>
+      Send any hand-written app-action JSON straight to the launcher.
+      Use this to experiment with actions that don't have a dedicated
+      command yet. Example:
+      raw {"action":"system","data":{"action":"get_device_info"}}
+
+  help            show this help
+  quit / q        disconnect and exit
 """
 
 
@@ -100,6 +149,20 @@ async def repl(client) -> None:
                 await client.set_volume(int(arg))
             elif cmd == "bright":
                 await client.set_brightness(int(arg))
+            elif cmd == "wifi":
+                if arg.lower() not in ("on", "off"):
+                    print("usage: wifi on|off")
+                else:
+                    await client.toggle_wifi(arg.lower() == "on")
+            elif cmd == "standby":
+                await client.set_standby_position(int(arg))
+            elif cmd == "fov":
+                await client.set_fov_pos_type(int(arg))
+            elif cmd == "query":
+                if not arg:
+                    print("usage: query <action-name>, e.g. query get_device_info")
+                else:
+                    await client.query(arg)
             elif cmd == "raw":
                 await client.send_action(arg)
             else:
