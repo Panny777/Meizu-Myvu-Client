@@ -104,6 +104,23 @@ class AppLayerMixin:
         await self.send_action(json.dumps(hl, separators=(",", ":")),
                                source_pkg=self.TICI_PKG)
 
+    # -------------------------------------------------------------- system
+    async def set_volume(self, value: int, stream_type: int = 3) -> None:
+        """Set the glasses' volume (0-15). streamType 3 matches the value
+        observed in captured telemetry; SuperMessageManger.z0() in the
+        official app sends the same shape."""
+        payload = {"action": "system", "data": {
+            "action": "set_volume", "value": str(value),
+            "streamType": stream_type, "needReply": False}}
+        await self.send_action(json.dumps(payload, separators=(",", ":")))
+
+    async def set_brightness(self, value: int) -> None:
+        """Set the glasses' screen brightness (observed range roughly 0-10).
+        Matches SuperMessageManger.n0() in the official app."""
+        payload = {"action": "system", "data": {
+            "action": "set_brightness", "value": str(value)}}
+        await self.send_action(json.dumps(payload, separators=(",", ":")))
+
     # ------------------------------------------------------------- notify
     async def push_notification(self, title: str, content: str,
                                 app_name: str = "ARIA") -> None:

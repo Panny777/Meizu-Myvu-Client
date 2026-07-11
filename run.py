@@ -57,6 +57,8 @@ commands:
   notify <title> | <body>    notification with a separate title
   tici <text>                open the teleprompter with this text
   hl <index>                 scroll/highlight teleprompter to paragraph <index>
+  vol <0-15>                 set the glasses' volume
+  bright <0-10>              set the glasses' screen brightness
   raw <json>                 send a raw app-action JSON (to the launcher)
   help                       show this help
   quit / q                   disconnect and exit
@@ -94,6 +96,10 @@ async def repl(client) -> None:
                 await client.open_teleprompter(arg or "Hello from Python!")
             elif cmd == "hl":
                 await client.teleprompter_highlight(int(arg))
+            elif cmd == "vol":
+                await client.set_volume(int(arg))
+            elif cmd == "bright":
+                await client.set_brightness(int(arg))
             elif cmd == "raw":
                 await client.send_action(arg)
             else:
