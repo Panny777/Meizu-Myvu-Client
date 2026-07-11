@@ -47,7 +47,7 @@ class MyvuRfcommClient(AppLayerMixin):
         own = session.build_ability_message(
             device_id_hex=self.own_id.hex(), device_name=self.device_name,
             session=sess)
-        log.info("-> ability/session handshake (%d B, session=%s)", len(own), sess)
+        log.debug("-> ability/session handshake (%d B, session=%s)", len(own), sess)
         await self.transport.send(own)
 
         try:
@@ -56,15 +56,16 @@ class MyvuRfcommClient(AppLayerMixin):
             log.warning("no ability reply from glasses over RFCOMM")
             return {}
         info = session.parse_ability_reply(reply)
-        log.info("<- ability reply from %s: %s", info.get("deviceId"),
-                 info.get("authBean"))
+        log.debug("<- ability reply from %s: %s", info.get("deviceId"),
+                  info.get("authBean"))
         self.peer_info["session"] = info
 
         confirm = session.build_auth_success_message(
             device_id_hex=self.own_id.hex(), device_name=self.device_name,
             session=sess)
-        log.info("-> AUTH_SUCCESS confirm (%d B)", len(confirm))
+        log.debug("-> AUTH_SUCCESS confirm (%d B)", len(confirm))
         await self.transport.send(confirm)
+        log.info("Session established.")
         return info
 
     async def _transport_send(self, frame: bytes) -> None:
@@ -95,7 +96,7 @@ class MyvuRfcommClient(AppLayerMixin):
             if not self.transport.connected:
                 log.warning("RFCOMM link is DOWN")
                 return
-            log.info("[%ds] still connected, idle...", n * 5)
+            log.debug("[%ds] still connected, idle...", n * 5)
 
     @property
     def is_connected(self) -> bool:

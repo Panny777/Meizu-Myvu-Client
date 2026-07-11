@@ -81,7 +81,7 @@ class MyvuClient(AppLayerMixin):
     async def connect(self) -> None:
         self.ble = BleakClient(self.address, disconnected_callback=self._on_disconnect)
         await self.ble.connect()
-        log.info("connected to %s (is_connected=%s)", self.address, self.ble.is_connected)
+        log.info("Connected to %s", self.address)
 
         # Catch an immediate peer-initiated drop (e.g. glasses rejecting an
         # unknown central because their phone is still connected).
@@ -127,8 +127,8 @@ class MyvuClient(AppLayerMixin):
         dmtu = max(18, self._safe_mtu() - 5)
         for c in self.channels.values():
             c.dmtu = dmtu
-        log.info("channel internal=%s external=%s MTU=%d DMTU=%d",
-                 self.internal_uuid, self.external_uuid, self._safe_mtu(), dmtu)
+        log.debug("channel internal=%s external=%s MTU=%d DMTU=%d",
+                  self.internal_uuid, self.external_uuid, self._safe_mtu(), dmtu)
 
     def _select_channels(self) -> None:
         services = self.ble.services
@@ -156,7 +156,8 @@ class MyvuClient(AppLayerMixin):
         await self._negotiate_version()
         await self._exchange_keys()
         await self._send_device_info()
-        log.info("BOND ESTABLISHED with %s", self.peer_info)
+        log.info("Paired.")
+        log.debug("bond details: %s", self.peer_info)
         return self.peer_info
 
     async def _negotiate_version(self) -> None:
@@ -170,12 +171,12 @@ class MyvuClient(AppLayerMixin):
             "c": CATEGORY_ID,
         }
         payload = json.dumps(own, separators=(",", ":")).encode()
-        log.info("-> version %s", own)
+        log.debug("-> version %s", own)
         await ic.send_fast(payload, packets.PKG_STARRY_DATA_INIT)
 
         _pkg, data = await ic.recv(timeout=8.0)
         peer = json.loads(data.decode("utf-8", "replace"))
-        log.info("<- version %s", peer)
+        log.debug("<- version %s", peer)
         self.encrypt_mode = int(peer.get("e", crypto.SYMMETRIC_V3_GCM))
         self.peer_info["negotiation"] = peer
 
@@ -188,7 +189,7 @@ class MyvuClient(AppLayerMixin):
             self.keypair.public_spki_der, self.own_id)
         msg = linkproto.link_protocol(
             self.own_id, linkproto.CMD_WRITE_SWITCH_KEY, wsk)
-        log.info("-> WRITE_SWITCH_KEY (%d B)", len(msg))
+        log.debug("-> WRITE_SWITCH_KEY (%d B)", len(msg))
         status = await ic.send_single_acked(msg, packets.PKG_STARRY_DATA)
         if status != packets.ACK_SUCCESS:
             raise RuntimeError(f"key write not acked (status={status})")
@@ -204,12 +205,14 @@ class MyvuClient(AppLayerMixin):
         peer_pub = peer_key_field[:-16]
         self.iv = peer_key_field[-16:]
         self.secret = crypto.ecdh_shared_secret(peer_pub, self.keypair)
-        log.info("derived shared secret (%d B), iv=%s", len(self.secret), self.iv)
+        log.debug("derived shared secret (%d B), iv=%s", len(self.secret), self.iv)
 
         # decrypt the glasses' DeviceInfo to prove the handshake worked
         info_bytes = crypto.decrypt(enc_info, self.secret, self.iv, self.encrypt_mode)
         self.peer_info["device"] = linkproto.parse_device_info(info_bytes)
-        log.info("<- glasses DeviceInfo %s", self.peer_info["device"])
+        device = self.peer_info["device"]
+        log.info("Glasses: %s (battery %s%%)", device.get("name"), device.get("battery"))
+        log.debug("glasses DeviceInfo %s", device)
 
     async def _send_device_info(self) -> None:
         ic = self.channels[self.internal_uuid]
@@ -222,7 +225,7 @@ class MyvuClient(AppLayerMixin):
         outer = crypto.encrypt(wsi, self.secret, self.iv, self.encrypt_mode)
         msg = linkproto.link_protocol(
             self.own_id, linkproto.CMD_WRITE_SWITCH_INFO, outer)
-        log.info("-> WRITE_SWITCH_INFO (%d B)", len(msg))
+        log.debug("-> WRITE_SWITCH_INFO (%d B)", len(msg))
         status = await ic.send_single_acked(msg, packets.PKG_STARRY_DATA)
         if status != packets.ACK_SUCCESS:
             raise RuntimeError(f"info write not acked (status={status})")
@@ -238,7 +241,7 @@ class MyvuClient(AppLayerMixin):
             device_id_hex=self.own_id.hex(),
             device_name=self.device_name,
             session=sess)
-        log.info("-> ability/session handshake (%d B, session=%s)", len(msg), sess)
+        log.debug("-> ability/session handshake (%d B, session=%s)", len(msg), sess)
         await ec.send(msg, packets.PKG_COMMON_DATA, ack=False)
 
         try:
@@ -248,8 +251,8 @@ class MyvuClient(AppLayerMixin):
                         "Watch for the 'connected' state on the lens.")
             return
         info = session.parse_ability_reply(reply)
-        log.info("<- ability reply from %s: %s", info.get("deviceId"),
-                 info.get("authBean"))
+        log.debug("<- ability reply from %s: %s", info.get("deviceId"),
+                  info.get("authBean"))
         self.peer_info["session"] = info
 
         # Phase 2: AUTH_SUCCESS confirm (StreamReq type=12). Without this the
@@ -258,8 +261,9 @@ class MyvuClient(AppLayerMixin):
         confirm = session.build_auth_success_message(
             device_id_hex=self.own_id.hex(), device_name=self.device_name,
             session=sess)
-        log.info("-> AUTH_SUCCESS confirm (%d B)", len(confirm))
+        log.debug("-> AUTH_SUCCESS confirm (%d B)", len(confirm))
         await ec.send(confirm, packets.PKG_COMMON_DATA, ack=False)
+        log.info("Session established.")
 
     @staticmethod
     def _load_init_script() -> List[Tuple[str, str, bytes]]:
@@ -295,14 +299,13 @@ class MyvuClient(AppLayerMixin):
                 continue  # skip non-data (e.g. the one captured ACK)
             mid = await self.send_relay_data(
                 m.msg_body, m.need_callback, m.category, m.app_unite_code)
-            body = m.msg_body
-            j = body.find(b"{")
-            label = body[j:j + 46].decode("utf-8", "replace") if j >= 0 else ""
-            log.info("   -> msgId=%d (f%s, %dB) %s", mid, frame, len(m.msg_body), label)
+            body_text = m.msg_body.decode("utf-8", "replace")
+            log.debug("   -> msgId=%d (f%s, %dB) %s", mid, frame, len(m.msg_body), body_text)
             sent += 1
             await asyncio.sleep(delay)
-        log.info("sent %d relay messages (link %s); watch the lens.", sent,
-                 "up" if self.ble.is_connected else "DOWN")
+        log.info("Initialized (%d messages sent).", sent)
+        log.debug("init burst done, link %s",
+                  "up" if self.ble.is_connected else "DOWN")
 
     # ------------------------------------------------------------- listen
     def start_drains(self) -> None:
@@ -327,7 +330,7 @@ class MyvuClient(AppLayerMixin):
                     _pkg, payload = await ic.recv()
                 except asyncio.CancelledError:
                     return
-                log.info("DEV/internal <- (%d B)", len(payload))
+                log.debug("DEV/internal <- (%d B)", len(payload))
 
         self._drain_tasks = [
             asyncio.create_task(drain_external()),
@@ -348,7 +351,7 @@ class MyvuClient(AppLayerMixin):
             if not self.ble.is_connected:
                 log.warning("link is DOWN (%s)", self._disconnect_reason)
                 return
-            log.info("[%ds] still connected, idle...", n * 5)
+            log.debug("[%ds] still connected, idle...", n * 5)
 
     @property
     def is_connected(self) -> bool:

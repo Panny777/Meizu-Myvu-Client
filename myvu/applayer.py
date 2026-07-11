@@ -64,7 +64,9 @@ class AppLayerMixin:
         body += linkproto.pb_string(4, action_json)
         body += linkproto.pb_varint(6, self.app_msg_id)
         mid = await self.send_relay_data(body)
-        log.info("ACTION -> msgId=%d %s", mid, action_json[:70])
+        log.debug("ACTION -> msgId=%d %s", mid, action_json)  # full detail -> file
+        summary = action_json if len(action_json) <= 70 else action_json[:70] + "..."
+        log.info("ACTION -> msgId=%d %s", mid, summary)       # short summary -> console+file
         return mid
 
     # --------------------------------------------------------- teleprompter
@@ -130,25 +132,29 @@ class AppLayerMixin:
             self._on_app_message(payload)
             return
         if m.msg_type == tlv.MSG_SEND_SUCCESS:
-            log.info("ACK <- glasses acked our msgId=%d", m.msg_id)
+            log.debug("ACK <- glasses acked our msgId=%d", m.msg_id)
             return
         if m.msg_type == tlv.MSG_SEND:
             if m.msg_id > self.seq.last_recv_id:
                 self.seq.last_recv_id = m.msg_id
             if m.need_callback:
                 await self._transport_send(self.seq.ack_frame(m))
-            log.info("GLASSES msg#%d:", m.msg_id)
+            log.debug("GLASSES msg#%d:", m.msg_id)
             self._on_app_message(m.msg_body)
             return
-        log.info("relay <- msgType=%d msgId=%d", m.msg_type, m.msg_id)
+        log.debug("relay <- msgType=%d msgId=%d", m.msg_type, m.msg_id)
 
     def _on_app_message(self, payload: bytes) -> None:
-        """Print any JSON carried in an inbound message."""
+        """Log any JSON carried in an inbound message. This is high-volume
+        telemetry (key presses, battery stats, event tracking, ...) as well
+        as real command replies, and there's no reliable way to tell them
+        apart automatically -- so it all goes to the log file (DEBUG) only.
+        Check myvu.log if you need to see what the glasses sent back."""
         text = payload.decode("utf-8", "replace")
         objs = _find_json_objects(text)
         if objs:
             for o in objs:
                 if len(o) > 4:
-                    log.info("APP <- %s", o)
+                    log.debug("APP <- %s", o)
         else:
-            log.info("APP <- (raw %d B) %s", len(payload), payload[:48].hex())
+            log.debug("APP <- (raw %d B) %s", len(payload), payload.hex())

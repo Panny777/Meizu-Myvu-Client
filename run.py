@@ -12,8 +12,33 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
+import os
 
 from myvu.client import MyvuClient
+
+LOG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "myvu.log")
+
+
+def configure_logging(log_file: str = LOG_FILE) -> logging.Handler:
+    """Two-tier logging: the console shows milestones and errors only; the
+    full blow-by-blow (every packet, every ACK, every telemetry message) goes
+    to `log_file`. Returns the console handler so callers can raise its level
+    (e.g. --debug). """
+    file_handler = logging.FileHandler(log_file, mode="a", encoding="utf-8")
+    file_handler.setLevel(logging.DEBUG)
+    file_handler.setFormatter(logging.Formatter(
+        "%(asctime)s %(levelname)-5s %(name)s: %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S"))
+
+    console_handler = logging.StreamHandler()
+    console_handler.setLevel(logging.INFO)
+    console_handler.setFormatter(logging.Formatter(
+        "%(asctime)s %(levelname)-5s %(message)s", datefmt="%H:%M:%S"))
+
+    logging.basicConfig(level=logging.WARNING, handlers=[file_handler, console_handler])
+    logging.getLogger("myvu").setLevel(logging.DEBUG)  # full detail -> file only
+    logging.getLogger("myvu").info("Full detail is being logged to %s", log_file)
+    return console_handler
 
 
 async def do_scan() -> None:
@@ -92,16 +117,20 @@ async def do_run(address: str, own_mac: str) -> None:
 
 
 def main() -> None:
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s %(levelname)-5s %(name)s: %(message)s",
-        datefmt="%H:%M:%S",
-    )
     ap = argparse.ArgumentParser()
     ap.add_argument("address", nargs="?", help="BLE address of the glasses")
     ap.add_argument("--mac", default="aa:bb:cc:dd:ee:ff",
                     help="identifier/MAC to present to the glasses")
+    ap.add_argument("--debug", action="store_true",
+                    help="also show full packet-level detail on the console "
+                         "(normally only in myvu.log)")
+    ap.add_argument("--log-file", default=LOG_FILE,
+                    help="where to write the full-detail log (default: myvu.log)")
     args = ap.parse_args()
+
+    console_handler = configure_logging(args.log_file)
+    if args.debug:
+        console_handler.setLevel(logging.DEBUG)
 
     if not args.address:
         asyncio.run(do_scan())

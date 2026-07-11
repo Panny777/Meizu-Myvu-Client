@@ -17,10 +17,13 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
+import os
 
 from myvu.rfcomm import DEFAULT_CHANNEL
 from myvu.rfcomm_client import MyvuRfcommClient
-from run import repl
+from run import configure_logging, repl
+
+LOG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "myvu_rfcomm.log")
 
 
 async def do_run(address: str, own_mac: str, channel: int) -> None:
@@ -36,18 +39,22 @@ async def do_run(address: str, own_mac: str, channel: int) -> None:
 
 
 def main() -> None:
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s %(levelname)-5s %(name)s: %(message)s",
-        datefmt="%H:%M:%S",
-    )
     ap = argparse.ArgumentParser()
     ap.add_argument("address", help="classic-Bluetooth MAC of the glasses")
     ap.add_argument("--mac", default="aa:bb:cc:dd:ee:ff",
                     help="identifier/MAC to present to the glasses")
     ap.add_argument("--channel", type=int, default=DEFAULT_CHANNEL,
                     help="RFCOMM channel (default 13, matches the capture)")
+    ap.add_argument("--debug", action="store_true",
+                    help="also show full packet-level detail on the console")
+    ap.add_argument("--log-file", default=LOG_FILE,
+                    help="where to write the full-detail log (default: myvu_rfcomm.log)")
     args = ap.parse_args()
+
+    console_handler = configure_logging(args.log_file)
+    if args.debug:
+        console_handler.setLevel(logging.DEBUG)
+
     asyncio.run(do_run(args.address, args.mac, args.channel))
 
 
