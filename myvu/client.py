@@ -36,12 +36,16 @@ OWN_ENCRYPT_SUPPORT = 5   # bitmask advertised in negotiation ("e")
 
 class MyvuClient(AppLayerMixin):
     def __init__(self, address: str, own_mac: str = "aa:bb:cc:dd:ee:ff",
-                 device_name: str = "MyvuPyClient", do_pair: bool = False) -> None:
+                 device_name: str = "MyvuPyClient", do_pair: bool = False,
+                 bt_status: int = linkproto.BTSTATUS_DEFAULT,
+                 connect_timeout: float = 20.0) -> None:
         self.address = address
         self.own_mac = own_mac
         self.own_id = linkproto.mac_str_to_bytes(own_mac)   # 6-byte identifier
         self.device_name = device_name
         self.do_pair = do_pair
+        self.bt_status = bt_status
+        self.connect_timeout = connect_timeout
         self._disconnect_reason: Optional[str] = None
 
         self.ble: Optional[BleakClient] = None
@@ -80,7 +84,7 @@ class MyvuClient(AppLayerMixin):
 
     async def connect(self) -> None:
         self.ble = BleakClient(self.address, disconnected_callback=self._on_disconnect)
-        await self.ble.connect()
+        await self.ble.connect(timeout=self.connect_timeout)
         log.info("Connected to %s", self.address)
 
         # Catch an immediate peer-initiated drop (e.g. glasses rejecting an
@@ -218,7 +222,8 @@ class MyvuClient(AppLayerMixin):
         ic = self.channels[self.internal_uuid]
         info = linkproto.device_info(
             bt_mac=self.own_mac.upper(), company_id="", category_id=CATEGORY_ID,
-            model_id="", name=self.device_name, battery=100, bt_status=0)
+            model_id="", name=self.device_name, battery=100,
+            bt_status=self.bt_status)
         # double encryption, per generateDeviceInfoSwitchData()
         inner = crypto.encrypt(info, self.secret, self.iv, self.encrypt_mode)
         wsi = linkproto.write_switch_info(inner)

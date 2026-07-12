@@ -28,6 +28,26 @@ CMD_BOND_MSG_CHANGE = 14
 CMD_AUTH_STATUE = 18
 CMD_AUTH_MESSAGE = 19
 
+# ---- BTSTATUS enum (starry_link_encrypt.proto, DeviceInfo.btStatus) -----
+# Classic-BT bond/connection state the phone reports to the glasses in the
+# DeviceInfo message. We currently always send DEFAULT(0); the real phone's
+# actual value can't be recovered from a passive capture (WRITE_SWITCH_INFO
+# is AES-encrypted with an ECDH-derived key we never captured the private
+# side of). NOBOND is the best-guess value to try for "please open classic-BT
+# pairing for the MAC I just gave you" -- unverified against real hardware.
+BTSTATUS_DEFAULT = 0
+BTSTATUS_BOND = 1
+BTSTATUS_BONDING = 2
+BTSTATUS_NOBOND = 3
+BTSTATUS_CONNECTED_ACL = 4
+BTSTATUS_CONNECTED_HFP = 5
+BTSTATUS_CONNECTED_A2DP = 6
+BTSTATUS_DISCONNECTED = 7
+BTSTATUS_NO_CONNECTED_BT = 8
+BTSTATUS_EXIST_CONNECTED_BT = 9
+BTSTATUS_CONNECT_FAIL = 10
+BTSTATUS_BOND_CANCEL_OR_TIMEOUT = 11
+
 
 # ---- minimal protobuf ---------------------------------------------------
 def _varint(n: int) -> bytes:

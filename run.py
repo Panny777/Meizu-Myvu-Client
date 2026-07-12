@@ -14,9 +14,12 @@ import asyncio
 import logging
 import os
 
+from dotenv import load_dotenv
+
 from myvu.client import MyvuClient
 
 LOG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "myvu.log")
+load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"))
 
 
 def configure_logging(log_file: str = LOG_FILE) -> logging.Handler:
@@ -84,13 +87,9 @@ commands:
   wifi on|off
       Turn the glasses' own WiFi radio on or off.
 
-  standby <0-3>
+  fov <0-3>
       Set the field-of-view position of the standby widgets shown while
       the glasses are idle/on standby.
-
-  fov <n>
-      Set the field-of-view display position type (another glasses-side
-      enum with an unconfirmed meaning).
 
   query <action>
       Send a no-argument status query and let the glasses answer in the
@@ -109,6 +108,27 @@ commands:
       command yet. Example:
       raw {"action":"system","data":{"action":"get_device_info"}}
 
+  ask <question>
+      Text-only stand-in for the glasses' AI assistant. Generates an
+      answer with the Claude API and pushes it to the lens through the
+      same JSON 'code' protocol the real assistant uses (an ASR caption
+      for your question, then a TTS caption for the answer) -- no real
+      microphone capture or speaker audio involved, since that would need
+      the parked classic-Bluetooth transport. Whether the lens visibly
+      reacts to text-only messages (vs. requiring real audio activity)
+      hasn't been confirmed on real hardware -- this is an experiment.
+      Requires `pip install anthropic` and an API key: set
+      ANTHROPIC_API_KEY, or run `ant auth login`. Example:
+      ask What's a good icebreaker for a team meeting?
+
+  setq <question>
+      Set the pre-set question sent when the glasses AI button is pressed
+      (code:3 control:1). The glasses allow only ~2 seconds (muteTimeout)
+      before showing "service error", so the button cannot block for user
+      input -- it responds instantly with this stored question instead.
+      Call setq with no argument to see the current question. Example:
+      setq What is the weather like today?
+
   help            show this help
   quit / q        disconnect and exit
 """
@@ -116,6 +136,37 @@ commands:
 
 async def repl(client) -> None:
     loop = asyncio.get_event_loop()
+
+    # Pre-set question sent when the glasses AI button is pressed.
+    # The glasses give us a 2-second window (muteTimeout=2000ms from WakeupControl)
+    # before they time out and show "service error".  A blocking input() call
+    # always exceeds that window, so we respond instantly with this stored question.
+    # Use  setq <question>  in the REPL to change it.
+    ai_button_question = ["What time is it?"]
+
+    async def _glasses_ai_trigger():
+        """Called when the glasses' AI button is pressed (code:3 control:1).
+
+        The glasses' AI voice UI requires a real RFCOMM classic-BT audio
+        connection for ASR. Without it the glasses track asr_start_time=''
+        internally and always show 'service error' regardless of what BLE
+        messages we send. We cannot fix this without RFCOMM.
+
+        Instead, we generate an answer via Claude and push it as a
+        notification — confirmed working. The glasses will briefly show their
+        own 'service error' (unavoidable without RFCOMM), then our
+        notification appears with the actual answer.
+        """
+        question = ai_button_question[0]
+        print(f"[AI button] question: {question!r} — generating answer...")
+        try:
+            answer = await client._generate_ai_answer(question)
+            print(f"AI: {answer}")
+            await client.push_notification("AI", answer)
+        except Exception as e:  # noqa: BLE001
+            print(f"[AI trigger] error: {e}")
+
+    client._ai_button_callback = _glasses_ai_trigger
     print(HELP)
     while True:
         if not client.is_connected:
@@ -154,10 +205,8 @@ async def repl(client) -> None:
                     print("usage: wifi on|off")
                 else:
                     await client.toggle_wifi(arg.lower() == "on")
-            elif cmd == "standby":
-                await client.set_standby_position(int(arg))
             elif cmd == "fov":
-                await client.set_fov_pos_type(int(arg))
+                await client.set_standby_position(int(arg))
             elif cmd == "query":
                 if not arg:
                     print("usage: query <action-name>, e.g. query get_device_info")
@@ -165,14 +214,29 @@ async def repl(client) -> None:
                     await client.query(arg)
             elif cmd == "raw":
                 await client.send_action(arg)
+            elif cmd == "ask":
+                if not arg:
+                    print("usage: ask <question>")
+                else:
+                    print("thinking...")
+                    answer = await client.ask_ai(arg)
+                    print(f"AI: {answer}")
+            elif cmd == "setq":
+                if not arg:
+                    print(f"current AI button question: {ai_button_question[0]!r}")
+                else:
+                    ai_button_question[0] = arg
+                    print(f"AI button question set to: {arg!r}")
             else:
                 print(f"unknown command: {cmd!r} (try 'help')")
         except Exception as e:  # noqa: BLE001
             print(f"error: {e}")
 
 
-async def do_run(address: str, own_mac: str) -> None:
-    client = MyvuClient(address, own_mac=own_mac)
+async def do_run(address: str, own_mac: str, bt_status: int,
+                 connect_timeout: float) -> None:
+    client = MyvuClient(address, own_mac=own_mac, bt_status=bt_status,
+                        connect_timeout=connect_timeout)
     try:
         await client.connect()
         await client.pair()
@@ -190,6 +254,15 @@ def main() -> None:
     ap.add_argument("address", nargs="?", help="BLE address of the glasses")
     ap.add_argument("--mac", default="aa:bb:cc:dd:ee:ff",
                     help="identifier/MAC to present to the glasses")
+    ap.add_argument("--bt-status", type=int, default=0,
+                    help="BTSTATUS value (0-11) to report in DeviceInfo.btStatus "
+                         "-- see myvu/linkproto.py BTSTATUS_* constants. Default "
+                         "0=DEFAULT. Try 3=NOBOND to test whether it's what makes "
+                         "the glasses open classic-BT pairing for --mac.")
+    ap.add_argument("--connect-timeout", type=float, default=20.0,
+                    help="seconds to wait for the initial BLE connect (default "
+                         "20; bleak's own default is 10, which can be tight on "
+                         "some Linux/BlueZ D-Bus setups)")
     ap.add_argument("--debug", action="store_true",
                     help="also show full packet-level detail on the console "
                          "(normally only in myvu.log)")
@@ -204,7 +277,8 @@ def main() -> None:
     if not args.address:
         asyncio.run(do_scan())
     else:
-        asyncio.run(do_run(args.address, args.mac))
+        asyncio.run(do_run(args.address, args.mac, args.bt_status,
+                           args.connect_timeout))
 
 
 if __name__ == "__main__":

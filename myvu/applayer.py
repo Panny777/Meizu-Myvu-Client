@@ -17,7 +17,14 @@ from typing import List
 
 from . import linkproto, relay, tlv
 
+try:
+    import anthropic
+except ImportError:  # optional dependency, only needed for ask_ai()
+    anthropic = None
+
 log = logging.getLogger("myvu")
+
+AI_PKG = "com.upuphone.ai.assistant"
 
 
 def _find_json_objects(s: str) -> List[str]:
@@ -173,6 +180,97 @@ class AppLayerMixin:
         }
         await self.send_action(json.dumps(payload, separators=(",", ":")))
 
+    # ----------------------------------------------------------------- AI
+    async def _generate_ai_answer(self, question: str) -> str:
+        """Call the Claude API for a short, speakable answer. Requires the
+        'anthropic' package and an API key (ANTHROPIC_API_KEY env var, or an
+        `ant auth login` profile)."""
+        if anthropic is None:
+            raise RuntimeError(
+                "ask_ai needs the 'anthropic' package: pip install anthropic")
+        client = getattr(self, "_ai_client", None)
+        if client is None:
+            client = anthropic.AsyncAnthropic()
+            self._ai_client = client
+        response = await client.messages.create(
+            model="claude-haiku-4-5",
+            max_tokens=1024,
+            system=(
+                "You are a voice assistant embedded in AR smart glasses, standing "
+                "in for the glasses' real AI assistant. Answer the user's question "
+                "the way a spoken assistant would: conversational and concise "
+                "(1-3 sentences). No markdown, no headers, no bullet lists -- this "
+                "text is displayed as an on-screen caption."
+            ),
+            messages=[{"role": "user", "content": question}],
+        )
+        return "".join(b.text for b in response.content if b.type == "text").strip()
+
+    async def ask_ai(self, question: str) -> str:
+        """Drive the glasses AI-assistant UI using the real protocol observed in
+        the BT capture (btcsnoop_hci_full_session.log).
+
+        Real sequence confirmed from capture (phone→glasses unless noted):
+          code:104 {type:1, sessionId}        — VAD start (mic detected speech)
+          code:101 {id, text, type:0} × N     — ASR partials (streaming words)
+          code:104 {type:2, sessionId}        — VAD end (speech finished)
+          code:101 {id, text, type:1}         — ASR final result
+          code:5   {ttsData:{text}}  ← FROM GLASSES (real NLU result; we send ours)
+          code:6   {id:"", playState:1}       — TTS playing
+          code:6   {id:"", playState:2}       — TTS done
+
+        Key differences from the old (broken) implementation:
+        - code:104 type:1/2 (VAD start/end) are REQUIRED — missing them leaves
+          the glasses UI stuck waiting and showing 'service error'.
+        - code:5 (TTS content) is sent by us with our generated answer text.
+        - id field in code:6 is empty string "" (not a UUID) as seen in capture.
+        - code:101 type:1 (final ASR) is sent before calling Claude so the
+          glasses exit 'listening' state immediately.
+        """
+        session_id = str(uuid.uuid4())
+
+        async def send_code(code: int, payload) -> None:
+            msg = {"code": code, "payload": payload}
+            await self.send_action(json.dumps(msg, separators=(",", ":")),
+                                   source_pkg=AI_PKG, target_pkg=AI_PKG)
+
+        # 1. VAD start — mic detected speech beginning
+        await send_code(104, {"type": 1, "sessionId": session_id})
+        await asyncio.sleep(0.1)
+
+        # 2. ASR final result — send immediately so glasses exit 'listening' UI
+        #    (type:1 = final; the glasses need this before their internal timeout)
+        await send_code(101, {"id": session_id, "isOfflineResult": False,
+                              "text": question, "type": 1})
+        await asyncio.sleep(0.1)
+
+        # 3. VAD end — speech finished, NLU processing begins
+        await send_code(104, {"type": 2, "sessionId": session_id})
+
+        # 4. Generate answer while glasses show the question text
+        answer = await self._generate_ai_answer(question)
+
+        # 5. TTS content — we send our generated text as the AI response
+        await send_code(5, {"id": "", "isContinuous": False, "isMulti": False,
+                            "isWakeup": False,
+                            "wakeupControl": {"control": 6, "muteTimeout": 2000,
+                                              "scene": "", "extra": ""},
+                            "ttsData": {"text": answer, "isChatGpt": False,
+                                        "nextStep": 0}})
+        await asyncio.sleep(0.1)
+
+        # 6. TTS playState:1 (playing) then playState:2 (done)
+        await send_code(6, {"id": "", "isContinuous": False, "isMulti": False,
+                            "isWakeup": False, "playState": 1})
+        await asyncio.sleep(0.2)
+        await send_code(6, {"id": "", "isContinuous": False, "isMulti": False,
+                            "isWakeup": False, "playState": 2})
+        await asyncio.sleep(0.2)
+
+        # 7. Back to idle
+        await send_code(107, {"control": 4, "isOffline": False})
+        return answer
+
     # -------------------------------------------------------------- receive
     async def _on_relay_frame(self, payload: bytes) -> None:
         """Handle an inbound app message: decode the relay frame, ACK the
@@ -199,12 +297,37 @@ class AppLayerMixin:
         telemetry (key presses, battery stats, event tracking, ...) as well
         as real command replies, and there's no reliable way to tell them
         apart automatically -- so it all goes to the log file (DEBUG) only.
-        Check myvu.log if you need to see what the glasses sent back."""
+        Check myvu.log if you need to see what the glasses sent back.
+
+        Special case: code:3 control:1 is the AI-button trigger sent by the
+        glasses when the user presses the dedicated AI key. We surface it at
+        INFO level and fire self._ai_button_callback() if one is registered.
+        """
         text = payload.decode("utf-8", "replace")
         objs = _find_json_objects(text)
         if objs:
             for o in objs:
                 if len(o) > 4:
                     log.debug("APP <- %s", o)
+                    self._check_ai_trigger(o)
         else:
             log.debug("APP <- (raw %d B) %s", len(payload), payload.hex())
+
+    def _check_ai_trigger(self, json_str: str) -> None:
+        """Detect code:3 control:1 (AI button pressed on glasses) and fire
+        the registered callback, if any. code:3 control:0 means the glasses
+        stopped listening (timeout or button released)."""
+        try:
+            msg = json.loads(json_str)
+        except (json.JSONDecodeError, ValueError):
+            return
+        if msg.get("code") != 3:
+            return
+        control = msg.get("payload", {}).get("control")
+        if control == 1:
+            log.info("AI button pressed on glasses -- use 'ask <question>' or set a callback")
+            cb = getattr(self, "_ai_button_callback", None)
+            if cb is not None:
+                asyncio.create_task(cb())
+        elif control == 0:
+            log.debug("AI button released / glasses stopped listening (code:3 control:0)")

@@ -53,8 +53,12 @@ scripts, home automation, other platforms — instead of only the official app.
 - 🔊 **Volume, brightness, WiFi, and standby-widget control**
 - 🔍 **Query any device status** (battery, language, zen mode, WiFi list, ...)
 - 🛠️ **Send any app command** via `send_action()` — the protocol vocabulary is
-  fully documented below, so new features (AI assistant, etc.) are a small
-  addition, not a new reverse-engineering project
+  fully documented below, so new features are a small addition, not a new
+  reverse-engineering project
+- 🤖 **`ask <question>`** — a text-only stand-in for the AI assistant: generates
+  an answer with the Claude API (Haiku 4.5) and pushes it to the lens as a
+  caption through the same JSON channel the real assistant uses (no
+  microphone/speaker audio required — see [Layer 7](#layer-7--driving-features-applayerpy))
 - 🧪 **Offline self-test suite** — every protocol layer is validated against
   real captured bytes, no hardware required to verify correctness
 - 💬 **Interactive REPL** for driving the glasses live from the terminal
@@ -88,6 +92,7 @@ myvu> bright 5
 myvu> wifi off
 myvu> query get_device_info
 myvu> raw {"action":"system","data":{"action":"get_device_info"}}
+myvu> ask What's a good icebreaker for a team meeting?
 ```
 
 | command | effect |
@@ -99,11 +104,14 @@ myvu> raw {"action":"system","data":{"action":"get_device_info"}}
 | `vol <0-15>` | set the glasses' volume |
 | `bright <value>` | set the glasses' screen brightness |
 | `wifi on\|off` | turn the glasses' own WiFi radio on/off |
-| `standby <0-3>` | set the field-of-view position of the standby widgets (confirmed range) |
-| `fov <n>` | set the field-of-view display position type (meaning unconfirmed) |
+| `fov <0-3>` | set the field-of-view position of the standby widgets (confirmed range) |
 | `query <action>` | send a no-arg status query; reply lands in `myvu.log`, not inline |
 | `raw <json>` | send any raw app-action JSON |
+| `ask <question>` | generate a Claude answer and push it to the lens as text (see [Layer 7](#layer-7--driving-features-applayerpy)) |
 | `help` / `q` | show detailed help for every command / disconnect and exit |
+
+`ask` needs the `anthropic` package (already in `requirements.txt`) and an API
+key — set `ANTHROPIC_API_KEY`, or run `ant auth login`.
 
 Run `help` in the REPL for a longer description of each command, including the
 full list of known `query` action names.
@@ -241,7 +249,7 @@ Programmatic API: `client.push_notification(title, content)`,
 `client.set_volume(value)`, `client.set_brightness(value)`,
 `client.toggle_wifi(enable)`, `client.set_standby_position(0-3)`,
 `client.set_fov_pos_type(value)`, `client.query(action_name)`,
-`client.send_action(json_str, target_pkg=...)`.
+`client.send_action(json_str, target_pkg=...)`, `client.ask_ai(question)`.
 
 Almost every "system"-category command shares one envelope:
 `{"action":"system","data":{"action":"<verb>", ...}}` — `"system"` is just the
@@ -266,6 +274,34 @@ routing tag, the real command is `data.action`. Reverse-engineered verbs, from
   upload diagnostic logs, not something to trigger from here)
 * **`do_recovery`** exists in the code — name suggests a factory-reset/recovery
   trigger. Not implemented here on purpose; don't send this one.
+
+#### The real AI assistant's audio path (and why `ask` doesn't need it)
+
+Capture analysis of a live AI-assistant interaction shows three separate
+transports involved, only one of which is the JSON channel this client
+already speaks:
+
+* **Microphone → phone:** continuous 346-byte binary chunks (likely
+  Opus-encoded) sent glasses→phone over the **same classic-BT RFCOMM channel**
+  as the JSON relay (channel 13), every ~40-80ms — not a standard Bluetooth
+  SCO/HFP voice call (HFP negotiates but no SCO audio was observed).
+* **TTS speech → glasses:** plays over standard **A2DP** (phone→glasses),
+  confirmed by packet-timing correlation with the AI-interaction window.
+* **ASR/TTS caption text:** rides the *same* JSON `code`-tagged protocol as
+  everything else in this document (`src`/`dst` = `com.upuphone.ai.assistant`):
+  `code:101` = ASR text (`type:0` partial / `type:1` final), `code:5` =
+  TTS content (`payload.ttsData.text`), `code:6` = TTS play state
+  (`1`=playing, `2`=finished), `code:104` = state change, `code:102` =
+  skill/intent result.
+
+Real mic capture and real TTS playback both need the parked classic-BT
+transport (see below) — but the caption **text** doesn't. `ask_ai()` in
+`applayer.py` generates an answer with the Claude API and pushes it through
+the plain-BLE JSON relay we already fully control, mimicking the real
+assistant's `code:101` → `code:6`(playing) → `code:5` → `code:6`(finished)
+message sequence. This is an experiment: whether the lens visibly reacts to
+these JSON messages alone (vs. requiring real audio activity to unlock that
+UI) hasn't been confirmed against real hardware.
 
 </details>
 
@@ -376,7 +412,9 @@ myvu_client/
 ## Contributing
 
 Issues and PRs are welcome — especially if you have a different MYVU model, a
-different Meizu/Upuphone StarryNet device, or want to add more app actions
-(the AI assistant flow is documented in the protocol but not yet wired up).
+different Meizu/Upuphone StarryNet device, or want to add more app actions.
+If you can confirm (or disprove) whether `ask <question>` visibly displays on
+real hardware, that's a particularly useful report — see
+[Layer 7](#layer-7--driving-features-applayerpy) for what's still unverified.
 If you reverse-engineer something new, a packet capture + the specific finding
 is the most useful kind of contribution.
