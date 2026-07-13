@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import time
 import uuid
 from typing import List
@@ -58,6 +59,49 @@ class AppLayerMixin:
         frame = self.seq.data_frame(msg_body, category, need_callback, app_unite_code)
         await self._transport_send(frame)
         return self.seq.out_id
+
+    @staticmethod
+    def _load_init_script() -> List["tuple[str, str, bytes]"]:
+        path = os.path.join(os.path.dirname(os.path.dirname(__file__)),
+                            "captured_init.txt")
+        out = []
+        with open(path) as fh:
+            for line in fh:
+                line = line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                frame, kind, hexdata = line.split("\t")
+                out.append((frame, kind, bytes.fromhex(hexdata)))
+        return out
+
+    async def send_init_burst(self, delay: float = 0.2) -> None:
+        """Rebuild the captured init messages through the relay layer with fresh
+        SEQUENTIAL msgIds (1,2,3...). This is the fix: the glasses discard the
+        capture's stale high msgIds as out-of-order, but accept a clean sequence.
+        Data messages (msgType=3) are resent; captured ACKs are skipped (we ACK
+        the glasses' live messages dynamically instead). Required on every
+        transport (BLE and classic-BT/RFCOMM alike) -- without it the glasses'
+        relay dispatcher never fully wakes up and silently drops later app
+        messages (no ACK, no visible effect) even though the channel itself is
+        connected and the ability handshake succeeds."""
+        script = self._load_init_script()
+        sent = 0
+        for frame, _kind, content in script:
+            if not self.is_connected:
+                log.error("LINK DROPPED before f%s", frame)
+                return
+            m = relay.parse_frame(content)
+            if m is None or m.msg_type != tlv.MSG_SEND:
+                continue  # skip non-data (e.g. the one captured ACK)
+            mid = await self.send_relay_data(
+                m.msg_body, m.need_callback, m.category, m.app_unite_code)
+            body_text = m.msg_body.decode("utf-8", "replace")
+            log.debug("   -> msgId=%d (f%s, %dB) %s", mid, frame, len(m.msg_body), body_text)
+            sent += 1
+            await asyncio.sleep(delay)
+        log.info("Initialized (%d messages sent).", sent)
+        log.debug("init burst done, link %s",
+                  "up" if self.is_connected else "DOWN")
 
     async def send_action(self, action_json: str,
                           target_pkg: str = "com.upuphone.star.launcher",

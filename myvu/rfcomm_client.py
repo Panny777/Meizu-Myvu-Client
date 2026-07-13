@@ -5,11 +5,16 @@ BR/EDR's own SSP-derived link-layer encryption covers security, so we go
 straight into the ability/AUTH handshake (verified against the capture: the
 very first RFCOMM channel-13 frame from the phone *is* the ability message).
 
-Prerequisite: the glasses must already be BR/EDR-bonded to this PC (Windows
-Settings > Bluetooth > pair the glasses) -- classic RFCOMM sockets refuse to
-connect otherwise. IMPORTANT: don't have a BLE session open to the glasses at
-the same time as attempting the classic-BT pairing dialog -- concurrent
-connection attempts have been observed to reset the glasses' BT stack.
+Prerequisite: the glasses must already be BR/EDR-bonded to this PC (use
+pair_glasses.py -- NOT Windows' Settings UI, which has a real crash history,
+see README.md's "Classic-Bluetooth (RFCOMM)" section).
+
+For the real app-relay channel (not just channel 13's ability handshake),
+you need a live BLE session at the same time -- the glasses generate the
+relay channel's UUID randomly per session and only sync it over BLE (see
+linkproto.CMD_SPP_SERVER_UUID_SYNC), so classic-BT here is meant to run
+*alongside* an active BLE session, not instead of one. See run_glasses.py,
+which does both together plus the HFP handshake `tici` also needs.
 """
 from __future__ import annotations
 
@@ -25,19 +30,29 @@ log = logging.getLogger("myvu")
 class MyvuRfcommClient(AppLayerMixin):
     def __init__(self, address: str, own_mac: str = "aa:bb:cc:dd:ee:ff",
                  device_name: str = "MyvuPyClient",
-                 channel: int = rfcomm.DEFAULT_CHANNEL) -> None:
+                 channel: int = rfcomm.DEFAULT_CHANNEL,
+                 service_uuid: str | None = None) -> None:
+        """If `service_uuid` is given, connect via WinRT SDP-by-UUID
+        resolution (myvu.rfcomm_winrt) -- the correct way to reach the real,
+        per-session app-relay channel (see linkproto.CMD_SPP_SERVER_UUID_SYNC).
+        Otherwise falls back to a raw channel-number socket (myvu.rfcomm),
+        which only ever reaches the fixed ability/handshake channel."""
         self.address = address
         self.own_mac = own_mac
         self.own_id = linkproto.mac_str_to_bytes(own_mac)
         self.device_name = device_name
-        self.transport = rfcomm.RfcommTransport(address, channel)
+        if service_uuid:
+            from . import rfcomm_winrt
+            self.transport = rfcomm_winrt.WinRtRfcommTransport(address, service_uuid)
+        else:
+            self.transport = rfcomm.RfcommTransport(address, channel)
         self.seq = relay.RelaySequencer()
         self.peer_info: dict = {}
         self._drain_task = None
 
     async def connect(self) -> None:
         await self.transport.connect()
-        log.info("RFCOMM connected to %s channel %d",
+        log.info("RFCOMM connected to %s channel %s",
                  self.address, self.transport.channel)
 
     async def establish_session(self) -> dict:
@@ -103,4 +118,6 @@ class MyvuRfcommClient(AppLayerMixin):
         return self.transport.connected
 
     async def close(self) -> None:
-        self.transport.close()
+        result = self.transport.close()
+        if asyncio.iscoroutine(result):
+            await result

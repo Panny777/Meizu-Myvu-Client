@@ -2,3 +2,5 @@ bleak>=0.22.0
 cryptography>=42.0.0
 anthropic>=0.40.0
 python-dotenv>=1.0.1
+winsdk>=1.0.0b10; sys_platform == "win32"  # classic-BT pairing experiment, see pair_glasses.py
+pywin32; sys_platform == "win32"  # COM apartment control (pythoncom) needed by rfcomm_pair.py

@@ -16,7 +16,8 @@ from typing import Dict, Tuple
 
 from . import crypto
 
-# ---- COMMAND enum (from starry_link_encrypt.proto) ---------------------
+# ---- COMMAND enum (from starry_link_encrypt.proto, confirmed against the
+# decompiled official app's Starry.StarryLinkEncrypt.COMMAND enum) --------
 CMD_INIT = 0
 CMD_ENSURE = 1
 CMD_UN_BONDED = 2
@@ -27,6 +28,29 @@ CMD_WRITE_SWITCH_INFO = 13
 CMD_BOND_MSG_CHANGE = 14
 CMD_AUTH_STATUE = 18
 CMD_AUTH_MESSAGE = 19
+# The classic-BT (RFCOMM) app-relay channel is NOT a fixed channel number --
+# the glasses generate a random 16-bit UUID per session and sync it to the
+# phone over BLE via CMD_SPP_SERVER_UUID_SYNC before any classic-BT SPP
+# connect is attempted (com.upuphone.starrynet.strategy.channel.spp.negotiate.
+# SPPNegotiateProtocolManager.handleServerUUIDSync in the decompiled app).
+# The captured "channel 13" was just whatever channel Android's SDP happened
+# to assign that one session -- not a stable protocol constant.
+CMD_SPP_SERVER_UUID_SYNC = 70
+CMD_SPP_SERVER_REQUEST_CONNECT = 71
+CMD_SPP_SERVER_REQUEST_STATE_OPEN = 72
+CMD_SPP_SERVER_REQUEST_STATE_CLOSE = 73
+
+
+def spp_short_uuid_to_str(data: bytes) -> str:
+    """Decode a CMD_SPP_SERVER_UUID_SYNC payload (4-byte LITTLE-endian int,
+    the 'short' 16-bit UUID) into the full Bluetooth Base UUID string,
+    matching UUIDUtils.makeUUID(int) in the decompiled app. Confirmed
+    little-endian empirically: a captured payload of bytes 21 91 00 00
+    only fits ByteUtils' expected range (SecureRandom.nextInt(65535)) when
+    read little-endian (0x9121=37153); big-endian gives 0x21910000, far out
+    of range."""
+    short = int.from_bytes(data[:4], "little")
+    return f"0000{short:04x}-0000-1000-8000-00805f9b34fb"
 
 # ---- BTSTATUS enum (starry_link_encrypt.proto, DeviceInfo.btStatus) -----
 # Classic-BT bond/connection state the phone reports to the glasses in the

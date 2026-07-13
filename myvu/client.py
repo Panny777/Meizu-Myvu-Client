@@ -16,13 +16,12 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import os
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, Optional
 
 from bleak import BleakClient, BleakScanner
 
 from . import channel as chan
-from . import crypto, linkproto, packets, relay, session, tlv, uuids
+from . import crypto, linkproto, packets, relay, session, uuids
 from .applayer import AppLayerMixin
 
 log = logging.getLogger("myvu")
@@ -60,6 +59,7 @@ class MyvuClient(AppLayerMixin):
         self.encrypt_mode: int = crypto.SYMMETRIC_V3_GCM
         self.peer_info: dict = {}
         self.seq = relay.RelaySequencer()   # RunAsOne relay msgId sequencing
+        self.spp_uuid: Optional[str] = None  # set once CMD_SPP_SERVER_UUID_SYNC arrives
 
     # ----------------------------------------------------------- discovery
     @staticmethod
@@ -270,47 +270,8 @@ class MyvuClient(AppLayerMixin):
         await ec.send(confirm, packets.PKG_COMMON_DATA, ack=False)
         log.info("Session established.")
 
-    @staticmethod
-    def _load_init_script() -> List[Tuple[str, str, bytes]]:
-        path = os.path.join(os.path.dirname(os.path.dirname(__file__)),
-                            "captured_init.txt")
-        out = []
-        with open(path) as fh:
-            for line in fh:
-                line = line.strip()
-                if not line or line.startswith("#"):
-                    continue
-                frame, kind, hexdata = line.split("\t")
-                out.append((frame, kind, bytes.fromhex(hexdata)))
-        return out
-
     async def _transport_send(self, frame: bytes) -> None:
         await self.channels[self.external_uuid].send(frame, packets.PKG_COMMON_DATA)
-
-    async def send_init_burst(self, delay: float = 0.2) -> None:
-        """Rebuild the captured init messages through the relay layer with fresh
-        SEQUENTIAL msgIds (1,2,3...). This is the fix: the glasses discard the
-        capture's stale high msgIds as out-of-order, but accept a clean sequence.
-        Data messages (msgType=3) are resent; captured ACKs are skipped (we ACK
-        the glasses' live messages dynamically instead)."""
-        script = self._load_init_script()
-        sent = 0
-        for frame, _kind, content in script:
-            if not self.ble.is_connected:
-                log.error("LINK DROPPED before f%s", frame)
-                return
-            m = relay.parse_frame(content)
-            if m is None or m.msg_type != tlv.MSG_SEND:
-                continue  # skip non-data (e.g. the one captured ACK)
-            mid = await self.send_relay_data(
-                m.msg_body, m.need_callback, m.category, m.app_unite_code)
-            body_text = m.msg_body.decode("utf-8", "replace")
-            log.debug("   -> msgId=%d (f%s, %dB) %s", mid, frame, len(m.msg_body), body_text)
-            sent += 1
-            await asyncio.sleep(delay)
-        log.info("Initialized (%d messages sent).", sent)
-        log.debug("init burst done, link %s",
-                  "up" if self.ble.is_connected else "DOWN")
 
     # ------------------------------------------------------------- listen
     def start_drains(self) -> None:
@@ -336,6 +297,22 @@ class MyvuClient(AppLayerMixin):
                 except asyncio.CancelledError:
                     return
                 log.debug("DEV/internal <- (%d B)", len(payload))
+                try:
+                    msg = linkproto.parse_link_protocol(payload)
+                except Exception as e:  # noqa: BLE001
+                    log.debug("DEV/internal <- unparseable: %s", e)
+                    continue
+                if msg.cmd == linkproto.CMD_SPP_SERVER_UUID_SYNC:
+                    self.spp_uuid = linkproto.spp_short_uuid_to_str(msg.data)
+                    log.info("<- SPP_SERVER_UUID_SYNC: uuid=%s", self.spp_uuid)
+                elif msg.cmd in (linkproto.CMD_SPP_SERVER_REQUEST_CONNECT,
+                                 linkproto.CMD_SPP_SERVER_REQUEST_STATE_OPEN,
+                                 linkproto.CMD_SPP_SERVER_REQUEST_STATE_CLOSE):
+                    log.info("<- LinkProtocol cmd=%d (SPP request, data=%s)",
+                             msg.cmd, msg.data)
+                elif msg.cmd not in (0,):
+                    log.debug("DEV/internal <- LinkProtocol cmd=%d data=%r",
+                              msg.cmd, msg.data)
 
         self._drain_tasks = [
             asyncio.create_task(drain_external()),

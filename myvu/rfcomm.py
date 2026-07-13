@@ -6,6 +6,18 @@ straight into the ability/AUTH handshake, relying on BR/EDR's own SSP-derived
 link-layer encryption for security (confirmed: RFCOMM channel 13 frame 807 in
 the capture *is* the ability message, with no ECDH exchange before it).
 
+Channel 13 confirmed against a second, independent capture (a fresh phone
+pairing + a force-stop/reopen reconnect, 2026-07-13): the phone opens THREE
+RFCOMM channels on the same multiplexer, and only one of them is this
+protocol -- channel 0 is the standard mux control channel, channel 3 carries
+plain Hands-Free Profile AT commands (`AT+BRSF=`, `AT+CIND=?`, ...; unrelated
+audio-gateway wiring, ignore it), and channel 13's SABM/UA handshake completes
+15ms before the first `eaca9353`-framed relay message appears -- i.e. don't
+assume "the first non-control RFCOMM channel you see" is this one. The
+classic-BT connection itself starts independently of, and slightly before,
+the BLE session finishing (not triggered by any particular BLE/JSON message),
+matching the timing already documented in the top-level README.
+
 Frame format (confirmed byte-for-byte against the capture):
 
     eaca9353            4-byte magic
@@ -19,8 +31,18 @@ Frame format (confirmed byte-for-byte against the capture):
 
 Requires: Python 3.12+ on Windows, which has native socket.AF_BLUETOOTH /
 socket.BTPROTO_RFCOMM support (no extra library needed). The remote device
-must already be BR/EDR-bonded (Windows Settings > Bluetooth > pair the
-glasses) -- classic RFCOMM sockets refuse to connect to an unbonded device.
+must already be BR/EDR-bonded (use pair_glasses.py) -- classic RFCOMM sockets
+refuse to connect to an unbonded device.
+
+IMPORTANT caveat (confirmed 2026-07-13): channel 13 answers the ability/AUTH
+handshake, but does NOT reliably carry the actual app-relay traffic
+afterward -- sending real app commands (notifications, tici, ...) here gets
+zero ACKs. The real app-relay channel is a DIFFERENT, randomly-generated
+per-session RFCOMM service (see linkproto.CMD_SPP_SERVER_UUID_SYNC), reached
+via SDP-by-UUID resolution in rfcomm_winrt.py, not this fixed-channel
+transport. Use this module only for probing/debugging channel 13 itself;
+use run_glasses.py (BLE + rfcomm_winrt.py + hfp.py) for anything that needs
+to actually work.
 """
 from __future__ import annotations
 

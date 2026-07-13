@@ -32,6 +32,7 @@ async def do_run(address: str, own_mac: str, channel: int) -> None:
         await client.connect()
         await client.establish_session()
         client.start_drains()
+        await client.send_init_burst()
         await asyncio.sleep(1.0)
         await repl(client)
     finally:

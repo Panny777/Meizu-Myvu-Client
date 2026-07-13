@@ -7,10 +7,11 @@ glasses' session, and can push notifications, drive the teleprompter, and
 read live telemetry, all reverse-engineered from a decompiled APK and a
 Bluetooth packet capture of the official app.
 
-> **Status:** the BLE transport is fully working and confirmed live — a
-> notification sent from this script displays on the lens, with zero phone
-> involved. See [Final status](#-final-status) for the honest details on
-> what works and what's still cosmetic-only.
+> **Status:** both transports are fully working and confirmed live — a
+> notification sent from this script displays on the lens with zero phone
+> involved, and as of the classic-Bluetooth breakthrough below, **the
+> teleprompter works too**, driven entirely from this client. See
+> [Final status](#-final-status) for the honest details.
 
 > **Not affiliated with Meizu, Upuphone, or Flyme.** This is an independent
 > interoperability project built by observing the official app's own network
@@ -27,7 +28,7 @@ Bluetooth packet capture of the official app.
 - [Protocol deep dive](#protocol-deep-dive) *(the full reverse-engineering writeup)*
 - [Troubleshooting](#troubleshooting)
 - [Final status](#-final-status)
-- [Classic-Bluetooth investigation (parked — read before touching)](#classic-bluetooth-rfcomm-investigation--parked)
+- [Classic-Bluetooth (RFCOMM) — how the teleprompter got working](#classic-bluetooth-rfcomm--how-the-teleprompter-got-working)
 - [Project structure](#project-structure)
 - [Contributing](#contributing)
 
@@ -49,7 +50,9 @@ scripts, home automation, other platforms — instead of only the official app.
 - 📡 **Live telemetry** — battery, wear state, key presses, screen state,
   streamed continuously once connected
 - 🔔 **Push notifications to the lens** from any Python script
-- 📜 **Teleprompter control** — open it and load arbitrary text
+- 📜 **Teleprompter control** — open it and load arbitrary text. Requires the
+  classic-BT link (`python run_glasses.py`, not plain `run.py` — see
+  [Classic-Bluetooth (RFCOMM)](#classic-bluetooth-rfcomm--how-the-teleprompter-got-working))
 - 🔊 **Volume, brightness, WiFi, and standby-widget control**
 - 🔍 **Query any device status** (battery, language, zen mode, WiFi list, ...)
 - 🛠️ **Send any app command** via `send_action()` — the protocol vocabulary is
@@ -99,8 +102,8 @@ myvu> ask What's a good icebreaker for a team meeting?
 |---|---|
 | `notify <text>` | push a notification card to the lens |
 | `notify <title> \| <body>` | notification with a separate title |
-| `tici <text>` | open the teleprompter and load this text (`\n` for line breaks) |
-| `hl <index>` | scroll/highlight the teleprompter to paragraph `<index>` |
+| `tici <text>` | open the teleprompter and load this text (`\n` for line breaks) — needs `run_glasses.py`, see below |
+| `hl <index>` | scroll/highlight the teleprompter to paragraph `<index>` — same requirement |
 | `vol <0-15>` | set the glasses' volume |
 | `bright <value>` | set the glasses' screen brightness |
 | `wifi on\|off` | turn the glasses' own WiFi radio on/off |
@@ -134,6 +137,27 @@ python run.py <BLE-ADDRESS> --debug      # also mirror full detail to the consol
 python run.py <BLE-ADDRESS> --log-file custom.log
 tail -f myvu.log                         # watch full detail live in another terminal
 ```
+
+### Teleprompter (`tici`/`hl`): use `run_glasses.py`, not `run.py`
+
+Plain `run.py` only opens the BLE link. The teleprompter (and probably
+anything else gated the same way) additionally needs a classic-Bluetooth
+link — not just any classic-BT connection, but the *specific*, per-session
+relay channel the glasses negotiate over BLE, plus a Hands-Free Profile (HFP)
+handshake. `run_glasses.py` does all of it automatically:
+
+```bash
+# one-time prerequisite: classic-BT pairing (see the section below first --
+# it has a real crash history, read it before running this)
+python pair_glasses.py <BT-ADDRESS>
+
+# then every session:
+python run_glasses.py <BT-ADDRESS>
+myvu> tici Welcome to my talk.\nFirst point here.
+```
+
+Windows only (it uses `winsdk`'s WinRT Bluetooth APIs for SDP-by-UUID RFCOMM
+resolution — see the section below for exactly why that's necessary).
 
 ## How it works
 
@@ -294,8 +318,12 @@ already speaks:
   (`1`=playing, `2`=finished), `code:104` = state change, `code:102` =
   skill/intent result.
 
-Real mic capture and real TTS playback both need the parked classic-BT
-transport (see below) — but the caption **text** doesn't. `ask_ai()` in
+Real mic capture and real TTS playback both need actual SCO/A2DP *audio
+streaming* over classic-BT, which is not implemented (the classic-BT
+transport itself now works — see
+[Classic-Bluetooth (RFCOMM)](#classic-bluetooth-rfcomm--how-the-teleprompter-got-working)
+— but `hfp.py` only does the AG signaling handshake, no real audio path) —
+but the caption **text** doesn't need any of that. `ask_ai()` in
 `applayer.py` generates an answer with the Claude API and pushes it through
 the plain-BLE JSON relay we already fully control, mimicking the real
 assistant's `code:101` → `code:6`(playing) → `code:5` → `code:6`(finished)
@@ -330,29 +358,73 @@ exact timing tolerances.
 
 ## 🎯 Final status
 
-**BLE client: fully working, confirmed live.** Pairing (ECDH), the ability/relay
-handshake, and app commands all work — a notification pushed from this Python
-client **displayed on the lens** with no phone or official app involved. The
-glasses answer every query (`device_info`, `language`, battery, AI version) and
-stream their live event telemetry indefinitely.
+**Both transports: fully working, confirmed live.** Pairing (ECDH), the
+ability/relay handshake, and app commands all work over BLE — a notification
+pushed from this Python client **displayed on the lens** with no phone or
+official app involved. The glasses answer every query (`device_info`,
+`language`, battery, AI version) and stream their live event telemetry
+indefinitely.
 
-**Known cosmetic limitation:** the glasses' own home-screen text can stay on
-"Connecting…"/"Open MYVU AR App" because that specific UI state is tied to a
-**second, classic-Bluetooth (SPP/RFCOMM) connection** that runs in parallel with
-BLE on the real phone (see below). This does not block any feature — it's
-cosmetic on the glasses' side.
+**The teleprompter works too, as of the classic-Bluetooth breakthrough
+below.** It took a genuinely deep investigation — the short version: `tici`
+is gated behind more than "some classic-BT link exists". It needs the
+*specific*, per-session app-relay channel the glasses negotiate dynamically
+over BLE (not a fixed channel), **plus** a Hands-Free Profile connection,
+matching exactly what the official app does. `run_glasses.py` does both
+automatically. See
+[Classic-Bluetooth (RFCOMM)](#classic-bluetooth-rfcomm--how-the-teleprompter-got-working)
+below for the full story, and note the real crash history around classic-BT
+*pairing* specifically (not the everyday connect flow) before running
+`pair_glasses.py`.
 
-## Classic-Bluetooth (RFCOMM) investigation — PARKED
+## Classic-Bluetooth (RFCOMM) — how the teleprompter got working
 
-⚠️ **Read this before touching classic-BT pairing with these glasses.**
+⚠️ **Read the pairing-crash-history part before touching classic-BT pairing
+with these glasses.** The rest of this section is a (long) confirmed-working
+writeup, kept because the dead ends matter as much as the answer if you're
+reverse-engineering something similar.
+
+### The short version
+
+1. **Channel 13 is not the app-relay channel.** It's a separate, fixed
+   handshake/liveness channel. The real relay channel is a **classic-BT
+   RFCOMM service at a random UUID the glasses generate fresh every
+   session**, synced to the phone over BLE via a `LinkProtocol` message
+   (`CMD_SPP_SERVER_UUID_SYNC = 70`, see `linkproto.py`) *before* any
+   classic-BT connect is attempted. The captured "channel 13" from earlier
+   investigation was just whatever channel got assigned to that one
+   session's random UUID — coincidence, not a protocol constant.
+2. **Python's raw `socket.AF_BLUETOOTH` on Windows can't resolve a UUID to a
+   channel** (no SDP-by-UUID, unlike Android's
+   `createRfcommSocketToServiceRecord`). The fix is WinRT's
+   `Windows.Devices.Bluetooth.Rfcomm` API, which does real SDP resolution —
+   see `myvu/rfcomm_winrt.py`.
+3. **Even with the right channel, `tici` still gated behind "connect to
+   mobile first".** The decompiled official app's `BrEdrMasterManager.
+   connectBrEdr()` always connects **Hands-Free Profile (HFP)** alongside
+   the relay channel, and the original packet capture confirms the real
+   phone establishes HFP (and A2DP) *before* the relay channel opens. HFP is
+   a standard, spec'd profile (fixed UUID `0000111e-...`, well-known AT
+   commands) — no reverse-engineering needed, just replaying the real
+   phone's own captured AG-role responses. See `myvu/hfp.py`. Once HFP's
+   handshake completes alongside the relay channel, `tici` opens for real —
+   confirmed live, with the glasses replying `glass_tici_started` and
+   `open_result_v2`, message types never seen before this fix.
+
+Run `python run_glasses.py <BT-ADDRESS>` to get all three pieces
+automatically (BLE session, negotiated relay channel via WinRT SDP, HFP
+handshake) before dropping into the same REPL as `run.py`.
+
+### The pairing crash history (read this first)
 
 Packet capture analysis showed the official app also opens a **classic-BT SPP
-connection** (RFCOMM channel 13, plus A2DP audio) alongside BLE, carrying the
-identical application protocol wrapped in a small frame:
-`eaca9353(magic) + len:4BE + 0002(const) + <same relay/StreamReq payload as BLE>`.
-This is fully implemented and offline-validated against captured bytes in
-`rfcomm.py`, `rfcomm_client.py`, `run_rfcomm.py`, and `probe_rfcomm.py` — but is
-**not something to casually try**:
+connection** (plus A2DP audio, plus the Hands-Free Profile RFCOMM channel
+mentioned above) alongside BLE, carrying the app-relay protocol wrapped in a
+small frame: `eaca9353(magic) + len:4BE + 0002(const) + <same relay/StreamReq
+payload as BLE>`. This is implemented in `rfcomm.py`, `rfcomm_winrt.py`,
+`rfcomm_client.py`, `hfp.py`, and `run_glasses.py` — but classic-BT *pairing*
+specifically (not the everyday connect flow, which is safe and routine once
+paired) has a real crash history and **is not something to casually retry**:
 
 **Ruled out as alternatives:** the account/telemetry actions documented in
 [Layer 7](#layer-7--driving-features-applayerpy) (`system_account`,
@@ -363,34 +435,169 @@ prompt persists regardless. Capture analysis backs this up: the classic-BT ACL
 connection completes at **t=43.28s**, a full 11 seconds before the RFCOMM data
 channel or the BLE `system_account` message ever appear (~t=54s) — the classic
 link is established early and independently, not as a reaction to any BLE
-message. The classic-BT/RFCOMM connection remains the far more likely gate.
+message. The classic-BT/RFCOMM connection was indeed the gate — confirmed
+below, along with the second piece (HFP) that wasn't obvious until the
+decompiled app and a fresh capture were cross-checked.
+
+**Confirmed on real hardware:** invoking `tici` (the teleprompter) while only
+BLE-connected pops up "Please connect to mobile first" on the lens. This is
+direct evidence the gate is real and specifically blocks the teleprompter —
+not just a cosmetic home-screen state.
 
 It requires classic (BR/EDR) Bluetooth bonding first, and attempting that
 bonding **crashed the glasses** (repeated spontaneous reboots) when done via
-Windows' native pairing UI — likely because Windows chose the "Numeric
-Comparison" SSP method, a more complex negotiation path that cheap embedded
-Bluetooth stacks often handle worse than "Just Works". Windows also
-aggressively auto-retries connecting to paired-but-broken devices, which turned
-one failed pairing attempt into a repeating crash loop.
+Windows' native pairing UI.
 
-**If you ever want to pick this up:** the untried, likely-safer path is pairing
-via BlueZ (Linux — a live-boot USB is easiest, since it uses the PC's built-in
-Bluetooth adapter with no driver/kernel setup) with the agent forced to
-`NoInputNoOutput` (`bluetoothctl` → `agent NoInputNoOutput` → `default-agent` →
-`pair <MAC>`), which forces Just Works instead of Numeric Comparison. This is
-**not guaranteed** to avoid a crash — treat it as an experiment, not a fix.
-**Do not attempt classic-BT pairing with these glasses from Windows.**
+**Update — fresh HCI snoop of a real phone pairing (2026-07-13):** a full
+`btsnoop` capture was taken on the phone covering (1) a first-ever pairing from
+a forgotten/unbonded state, and (2) a force-stop-the-app-then-reopen reconnect
+~35 minutes later. This replaces guesswork with confirmed facts and corrects
+an earlier assumption in this doc:
+
+- **The real phone also uses Numeric Comparison, not Just Works.** Both sides
+  declare IO capability `DisplayYesNo` with MITM required (phone:
+  `MITM_Required-DedicatedBonding`, glasses: `MITM_Required-GeneralBonding`),
+  and the phone receives a genuine `User Confirmation Request` with a 6-digit
+  numeric value. **The earlier theory that Windows crashed the glasses by
+  picking Numeric Comparison instead of Just Works was wrong** — the real
+  phone negotiates the same association model Windows did. Forcing a
+  `NoInputNoOutput` BlueZ agent (which forces Just Works) would make a client
+  diverge from real hardware, not match it — **that recommendation is
+  retracted.**
+- **There is no persistent classic-BT bonding.** Both captured sessions —
+  including the reconnect, 35 minutes after the first pairing — ran the
+  *entire* SSP negotiation from scratch (`Link Key Request` came back empty,
+  followed by a full IO-capability exchange and a **new** numeric-comparison
+  code each time: `940028` then `404870`). The phone requests
+  `DedicatedBonding` (non-persistent), so nothing is cached — every classic-BT
+  connection re-pairs. Since no dialog was shown to a human 35 minutes into
+  passive use, the real app must be auto-confirming the numeric comparison
+  programmatically (e.g. Android's `BluetoothDevice.setPairingConfirmation`)
+  rather than surfacing system pairing UI.
+- **The `eaca9353`-framed relay channel is confirmed live in this capture**
+  (135 occurrences), immediately reachable after SSP + encryption complete, an
+  SDP browse, and a separate unrelated HFP RFCOMM channel (`AT+BRSF=`,
+  `AT+CIND=?`, `AT+XAPL=...`) — `rfcomm.py`'s framing assumptions check out
+  against this fresh capture, not just the original session capture.
+- **Channel numbers, precisely confirmed via the raw SABM/UA control frames**
+  (not just payload pattern-matching): the phone opens three RFCOMM channels
+  on one multiplexer — channel 0 (mux control), **channel 3 (Hands-Free
+  Profile AT commands — unrelated, ignore)**, and **channel 13**, whose
+  SABM/UA handshake completes 15ms before the first `eaca9353` frame appears.
+  Don't assume the first non-control channel you find is the app relay — it's
+  channel 3 first, then 13.
+- **Timing confirms the classic-BT connection is independent of BLE**, as
+  originally suspected: the phone's classic-BT `Remote Name Request` (the
+  first step) fires *before* the BLE ability/session handshake even finishes
+  — it's a parallel OS/app-level process, not a reaction to anything sent
+  over the BLE JSON channel, so there's no BLE message that can trigger it.
+
+The likely real cause of the Windows crash is therefore something other than
+the SSP association model — e.g. Windows' own SSP/L2CAP timing, its handling
+of `DedicatedBonding`, or its auto-retry behavior against a paired-but-broken
+device turning one bad attempt into a reboot loop. That still hasn't been
+isolated.
+
+**Update — `pair_glasses.py` (WinRT-based) now works, used successfully many
+times without a crash.** The fix was replicating the *real* flow instead of
+using Windows' Settings UI: present IO capability `DisplayYesNo` with
+MITM-required dedicated bonding via WinRT's `DeviceInformationCustomPairing`,
+and programmatically auto-accept the `User Confirmation Request` (matching
+the numeric value, no human prompt) — see `myvu/rfcomm_pair.py`. **Still use
+`pair_glasses.py`, never Windows' native Settings UI pairing dialog**, which
+retains its crash history. Pairing can still be slow/flaky (the SSP
+negotiation sometimes needs a couple of retries, and a concurrent BLE session
+open at the same time measurably helped reliability in testing — the real
+phone's own capture shows its classic-BT connection attempt starting almost
+simultaneously with BLE session establishment), but it is no longer expected
+to crash the glasses when driven through `pair_glasses.py`.
 
 If the glasses ever get stuck in a reboot loop after a pairing attempt: turn off
 Bluetooth on the host machine (or forget/remove the device) immediately to stop
 it from auto-retrying, and give the glasses a few minutes untouched to settle.
 
+### The relay channel and HFP — full technical writeup
+
+Once paired, the actual "why doesn't `tici` work" investigation had two
+separate wrong turns before the real answer:
+
+**Wrong turn 1: assuming channel 13 was the app-relay channel.** It answers
+the ability/AUTH handshake (a fixed, simple exchange), which is why early
+testing looked like partial success — the handshake completed and got a real
+reply. But every actual app command sent afterward (notifications, `tici`)
+got zero response, not even from the *init burst* itself. The real relay
+channel turned out to be a **classic-BT RFCOMM service published at a random
+UUID the glasses generate fresh each session** and sync to the phone over
+BLE via a `LinkProtocol` message — `CMD_SPP_SERVER_UUID_SYNC = 70` (values
+71-73 are related SPP negotiation commands, all in `linkproto.py`'s COMMAND
+enum, cross-checked against the decompiled app's
+`Starry.StarryLinkEncrypt.COMMAND` enum and
+`SPPNegotiateProtocolManager.handleServerUUIDSync`). The payload is a 4-byte
+**little-endian** int (confirmed empirically: a captured payload of `21 91
+00 00` only falls inside `SecureRandom.nextInt(65535)`'s range when read
+little-endian — `0x9121` = 37153; big-endian gives `0x21910000`, far out of
+range) that gets formatted into a full Bluetooth Base UUID:
+`0000{short:04x}-0000-1000-8000-00805f9b34fb` (see
+`linkproto.spp_short_uuid_to_str`).
+
+**Getting a live UUID isn't enough on Windows**, because
+`socket.AF_BLUETOOTH`/`BTPROTO_RFCOMM` only connects by channel *number* —
+there's no SDP-by-UUID resolution like Android's
+`createRfcommSocketToServiceRecord(uuid)`. The fix is
+`Windows.Devices.Bluetooth.Rfcomm`: `BluetoothDevice.
+get_rfcomm_services_for_id_async(RfcommServiceId.from_uuid(...))` does the
+real SDP lookup and resolves straight to a connectable host/service name
+pair for a `StreamSocket`. See `myvu/rfcomm_winrt.py` — every WinRT API name
+in it was verified against the installed `winsdk` package by introspection,
+not guessed.
+
+**Wrong turn 2: assuming the relay channel alone was sufficient.** With the
+real UUID and WinRT SDP resolution, every relay message finally started
+getting ACKed — the *entire* init burst, for the first time in this whole
+investigation. But `tici` still popped "Please connect to mobile first".
+Cross-checking the decompiled app's `BrEdrMasterManager.connectBrEdr()`
+showed it *always* connects Hands-Free Profile (HFP) and A2DP alongside the
+relay channel — never just the relay channel alone — and the original packet
+capture confirms the ordering: HFP and A2DP both connect *before* the relay
+channel opens in the real session. Checking Windows' own paired-device list
+confirmed neither profile had been auto-connected (registry: `COD` cached as
+`0` for this device — Windows only auto-installs HFP/A2DP drivers when it
+learns a device's Class-of-Device bits during an *inquiry scan*, which never
+happened here since every connection went directly by MAC address, bypassing
+discovery).
+
+Rather than fight Windows' driver auto-detection, `myvu/hfp.py` implements a
+minimal HFP **Audio Gateway (AG)** responder — the glasses are the
+Hands-Free unit (HF) and send AT commands (`AT+BRSF=767`, `AT+CIND=?`,
+`AT+CMER=...`, `AT+XAPL=...`); the phone (AG) answers them. HFP has a fixed,
+well-known UUID (`0000111e-0000-1000-8000-00805f9b34fb`, not session-random
+like the relay channel) and is a standardized profile, so no
+reverse-engineering was needed for the *format* — only the exact reply
+bytes, which were pulled directly from the original capture (the real
+phone's own AG-role responses, e.g. `AT+BRSF=767` → `+BRSF: 3943` then
+`OK`), confirmed byte-identical across two independent capture sessions.
+`myvu/hfp.py` connects via the same WinRT SDP-by-UUID mechanism as the relay
+channel, then just replays the captured reply for each recognized AT line —
+no real call-control or audio streaming, just enough signaling for the
+glasses to consider a phone "properly" connected.
+
+With the relay channel and HFP both up, `tici` opens for real: the glasses
+reply `glass_tici_started`, `send_content_reply`, and `open_result_v2` with
+computed `paragraphIndexes` — none of which had ever appeared in this
+investigation until this fix. `run_glasses.py` wires connect → wait for the
+UUID sync → relay channel via WinRT → HFP handshake → REPL into one command.
+
 ## Project structure
 
 ```
 myvu_client/
-├── run.py                REPL entry point (BLE)
-├── run_rfcomm.py          entry point (classic-BT — parked, see warning above)
+├── run.py                REPL entry point (BLE only -- notify/query/etc, not tici)
+├── run_glasses.py         REPL entry point (BLE + classic-BT relay + HFP -- tici works)
+├── run_rfcomm.py          low-level classic-BT entry point (fixed channel 13 only --
+│                          ability handshake works, app commands don't; superseded
+│                          by run_glasses.py for anything beyond debugging channel 13)
+├── pair_glasses.py         classic-BT pairing (WinRT-based; read the crash-history
+│                          section before using -- Settings UI pairing is unsafe)
 ├── probe_rfcomm.py         low-level RFCOMM connectivity probe
 ├── selftest.py            offline validation suite (no hardware needed)
 ├── captured_init.txt      reference init-message sequence from a real capture
@@ -399,14 +606,20 @@ myvu_client/
     ├── packets.py         packet transport layer (fragmentation, ACKs)
     ├── channel.py         reliable message channel built on packets.py
     ├── crypto.py          ECDH + AES (all 3 modes)
-    ├── linkproto.py       LinkProtocol protobuf + pairing message builders
+    ├── linkproto.py       LinkProtocol protobuf + pairing/SPP-negotiation message builders
     ├── session.py         version negotiation + two-phase ability auth
     ├── tlv.py             TlvBox codec (used by the relay layer)
     ├── relay.py           sequenced application-message relay
-    ├── applayer.py        shared feature API (notify, teleprompter, send_action)
-    ├── client.py          BLE client — ties every layer together
-    ├── rfcomm.py           classic-BT transport + framing (parked)
-    └── rfcomm_client.py    classic-BT client (parked)
+    ├── applayer.py        shared feature API (notify, teleprompter, send_action,
+    │                      send_init_burst -- shared by BLE and classic-BT)
+    ├── client.py          BLE client -- ties every layer together
+    ├── rfcomm.py           classic-BT transport + framing, fixed-channel socket connect
+    ├── rfcomm_winrt.py     classic-BT transport connecting by SDP-resolved UUID (the
+    │                      one that actually reaches the real app-relay channel)
+    ├── rfcomm_pair.py      WinRT-based classic-BT pairing (see pair_glasses.py)
+    ├── hfp.py              minimal Hands-Free Profile Audio-Gateway responder
+    └── rfcomm_client.py    classic-BT client -- same AppLayerMixin as client.py, just
+                           swap which transport (rfcomm.py or rfcomm_winrt.py) it holds
 ```
 
 ## Contributing
