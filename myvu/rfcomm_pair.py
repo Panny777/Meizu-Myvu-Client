@@ -65,7 +65,7 @@ async def _pump_com_messages(interval: float = 0.02) -> None:
         await asyncio.sleep(interval)
 
 
-async def probe_endpoints(mac: str, timeout: float = 25.0) -> list:
+async def probe_endpoints(mac: str, timeout: float = 95.0) -> list:
     """SAFE diagnostic: enumerate every unpaired Bluetooth thing Windows can see
     for the glasses -- classic endpoint, BLE endpoint, and the device container
     -- and log each with its kind, id, name, and whether it reports can_pair.
