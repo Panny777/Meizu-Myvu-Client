@@ -65,6 +65,52 @@ async def _pump_com_messages(interval: float = 0.02) -> None:
         await asyncio.sleep(interval)
 
 
+async def unpair(mac: str) -> bool:
+    """Programmatically remove an ACTIVE pairing for the glasses (both the BLE
+    and classic endpoints, whichever is paired), via
+    DeviceInformationPairing.unpair_async().
+
+    Returns True if, after this call, neither endpoint is paired. Note the
+    limitation: this only removes a real pairing (is_paired=True) -- it does
+    NOT purge a stale/cached association-endpoint entry that lingers in
+    Settings > "Other devices" without being an active bond (there's no clean
+    public WinRT API for that; use Settings > Remove device for that case).
+    Most useful right after pair_glasses_audio.py creates a (wrong) BLE bond,
+    to tear it down without clicking through Settings.
+    """
+    import winsdk.windows.devices.bluetooth as bt
+
+    addr = _mac_to_int(mac)
+    any_unpaired = False
+    still_paired = False
+
+    async def _try(dev, label):
+        nonlocal any_unpaired, still_paired
+        if dev is None:
+            log.debug("unpair: %s endpoint not resolvable (nothing to do)", label)
+            return
+        pr = dev.device_information.pairing
+        if not pr.is_paired:
+            log.info("unpair: %s endpoint already unpaired", label)
+            return
+        result = await pr.unpair_async()
+        status = getattr(result, "status", None)
+        log.info("unpair: %s endpoint unpair_async -> status=%s", label, status)
+        # re-check
+        if pr.is_paired:
+            still_paired = True
+        else:
+            any_unpaired = True
+
+    await _try(await bt.BluetoothLEDevice.from_bluetooth_address_async(addr), "BLE")
+    await _try(await bt.BluetoothDevice.from_bluetooth_address_async(addr), "classic")
+
+    if not any_unpaired and not still_paired:
+        log.info("unpair: nothing was paired -- if a MYVU entry still shows in "
+                 "Settings > Other devices, it's a cached endpoint; remove it there.")
+    return not still_paired
+
+
 async def probe_endpoints(mac: str, timeout: float = 95.0) -> list:
     """SAFE diagnostic: enumerate every unpaired Bluetooth thing Windows can see
     for the glasses -- classic endpoint, BLE endpoint, and the device container

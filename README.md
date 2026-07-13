@@ -144,17 +144,38 @@ Plain `run.py` only opens the BLE link. The teleprompter (and probably
 anything else gated the same way) additionally needs a classic-Bluetooth
 link — not just any classic-BT connection, but the *specific*, per-session
 relay channel the glasses negotiate over BLE, plus a Hands-Free Profile (HFP)
-handshake. `run_glasses.py` does all of it automatically:
+connection so the glasses believe a real phone is attached.
+
+**One-time setup — pair the glasses as an AUDIO device (this is the stable
+way, and it matters):**
+
+1. **Settings → Bluetooth & devices → Add device → Bluetooth**, and pair
+   **MYVU DC47**. It will appear in *both* "Audio devices" and "Other devices".
+2. **Remove the glasses from the "Other devices" section** (leave the
+   "Audio devices" entry). This step is essential: the generic "Other devices"
+   entry is a bare data pairing that makes the glasses **spontaneously reboot**;
+   the "Audio devices" entry is Windows natively holding HFP/A2DP, which is the
+   connection shape the glasses' firmware expects — with it, they stay stable.
+
+> Pair via the Windows **Add device** wizard, not any script. Programmatic
+> pairing was investigated thoroughly and does **not** work for this device —
+> app-level WinRT can only reach the glasses' BLE endpoint, and pairing that
+> yields a BLE-only bond (the crashy "Other devices" kind), never the audio
+> pairing. See the [classic-BT section](#classic-bluetooth-rfcomm--how-the-teleprompter-got-working)
+> for the full evidence. `pair_glasses.py` / `pair_glasses_audio.py` remain in
+> the repo as the investigation + diagnostics, but are **not** the setup path.
+
+**Then, every session:**
 
 ```bash
-# one-time prerequisite: classic-BT pairing (see the section below first --
-# it has a real crash history, read it before running this)
-python pair_glasses.py <BT-ADDRESS>
-
-# then every session:
-python run_glasses.py <BT-ADDRESS>
+python run_glasses.py <BT-ADDRESS> --no-hfp
 myvu> tici Welcome to my talk.\nFirst point here.
 ```
+
+`--no-hfp` because Windows already holds the Hands-Free connection natively
+(from the audio pairing) — our in-app HFP responder would only conflict with
+it. (If you ever run against glasses *not* paired as an audio device, drop
+`--no-hfp` and the in-app HFP handshake in `hfp.py` runs instead.)
 
 Windows only (it uses `winsdk`'s WinRT Bluetooth APIs for SDP-by-UUID RFCOMM
 resolution — see the section below for exactly why that's necessary).
@@ -492,29 +513,43 @@ an earlier assumption in this doc:
   — it's a parallel OS/app-level process, not a reaction to anything sent
   over the BLE JSON channel, so there's no BLE message that can trigger it.
 
-The likely real cause of the Windows crash is therefore something other than
-the SSP association model — e.g. Windows' own SSP/L2CAP timing, its handling
-of `DedicatedBonding`, or its auto-retry behavior against a paired-but-broken
-device turning one bad attempt into a reboot loop. That still hasn't been
-isolated.
+**The crash cause, finally isolated: it's the *kind* of pairing, not a timing
+bug.** The glasses reboot when paired as a **bare/generic data device** (the
+"Other devices" entry — no audio profiles). They are **stable** when paired as
+an **audio device** (HFP/A2DP), because that's the phone-shaped connection
+their firmware expects. Both are confirmed on hardware: the generic pairing
+(whether from Windows' Settings UI, or from `pair_glasses.py`'s WinRT
+`DeviceInformationCustomPairing`, or from `pair_glasses_audio.py` pairing the
+BLE endpoint) reboots them; the audio pairing (Windows **Settings → Add
+device**) is smooth, and the teleprompter works over it. So:
 
-**Update — `pair_glasses.py` (WinRT-based) now works, used successfully many
-times without a crash.** The fix was replicating the *real* flow instead of
-using Windows' Settings UI: present IO capability `DisplayYesNo` with
-MITM-required dedicated bonding via WinRT's `DeviceInformationCustomPairing`,
-and programmatically auto-accept the `User Confirmation Request` (matching
-the numeric value, no human prompt) — see `myvu/rfcomm_pair.py`. **Still use
-`pair_glasses.py`, never Windows' native Settings UI pairing dialog**, which
-retains its crash history. Pairing can still be slow/flaky (the SSP
-negotiation sometimes needs a couple of retries, and a concurrent BLE session
-open at the same time measurably helped reliability in testing — the real
-phone's own capture shows its classic-BT connection attempt starting almost
-simultaneously with BLE session establishment), but it is no longer expected
-to crash the glasses when driven through `pair_glasses.py`.
+> **Pair as an audio device via Settings → Add device, then remove the
+> "Other devices" entry.** That is the setup, full stop.
 
-If the glasses ever get stuck in a reboot loop after a pairing attempt: turn off
-Bluetooth on the host machine (or forget/remove the device) immediately to stop
-it from auto-retrying, and give the glasses a few minutes untouched to settle.
+**Programmatic audio pairing was investigated hard and does NOT work here —
+this is a confirmed dead-end, not an untried idea.** The chain of evidence:
+- Pairing by raw MAC (`pair_glasses.py`, WinRT `from_bluetooth_address_async`)
+  → generic classic pairing → crash.
+- Discovering + pairing over BLE (`pair_glasses_audio.py`) → BLE-only bond in
+  "Other devices" → still not the audio pairing.
+- A `--probe` diagnostic (`pair_glasses_audio.py --probe`, in
+  `rfcomm_pair.probe_endpoints`) enumerated every unpaired thing Windows can
+  see for the glasses across a fair scan window: **only the BLE endpoint is
+  reachable.** No classic association endpoint, no device container appears —
+  the glasses don't answer a classic inquiry, and Windows exposes nothing
+  else to pair. The Settings **Add device** wizard succeeds because it runs
+  with system-level access that bridges BLE discovery to a classic *audio*
+  pairing; app-level WinRT only ever sees the BLE endpoint, whose pairing is
+  BLE-only.
+
+`pair_glasses.py` / `pair_glasses_audio.py` are kept for that investigation
+and for their useful bits (`--probe`, and `--unpair` which programmatically
+tears down an *active* bond via `unpair_async` — handy right after a wrong
+BLE bond, though it can't purge a stale cached "Other devices" entry).
+
+If the glasses ever get stuck in a reboot loop after a bad (generic) pairing:
+turn off Bluetooth on the host machine (or remove the device from Settings)
+immediately, and give the glasses a few minutes untouched to settle.
 
 ### The relay channel and HFP — full technical writeup
 
@@ -585,19 +620,32 @@ With the relay channel and HFP both up, `tici` opens for real: the glasses
 reply `glass_tici_started`, `send_content_reply`, and `open_result_v2` with
 computed `paragraphIndexes` — none of which had ever appeared in this
 investigation until this fix. `run_glasses.py` wires connect → wait for the
-UUID sync → relay channel via WinRT → HFP handshake → REPL into one command.
+UUID sync → relay channel via WinRT → HFP → REPL into one command.
+
+In the recommended setup (glasses paired as an **audio** device),
+**Windows already holds HFP/A2DP natively**, so run with `--no-hfp` and the
+in-app `hfp.py` responder is skipped — Windows' native Hands-Free connection
+clears the "connect to mobile" gate, and `run_glasses.py` only has to open
+the BLE session and the relay channel. The in-app `hfp.py` path (default,
+without `--no-hfp`) is the fallback for glasses that are *not* paired as an
+audio device.
 
 ## Project structure
 
 ```
 myvu_client/
 ├── run.py                REPL entry point (BLE only -- notify/query/etc, not tici)
-├── run_glasses.py         REPL entry point (BLE + classic-BT relay + HFP -- tici works)
+├── run_glasses.py         REPL entry point (BLE + classic-BT relay + HFP -- tici works).
+│                          Use --no-hfp when the glasses are paired as an audio device.
 ├── run_rfcomm.py          low-level classic-BT entry point (fixed channel 13 only --
 │                          ability handshake works, app commands don't; superseded
 │                          by run_glasses.py for anything beyond debugging channel 13)
-├── pair_glasses.py         classic-BT pairing (WinRT-based; read the crash-history
-│                          section before using -- Settings UI pairing is unsafe)
+├── pair_glasses.py         classic-BT pairing INVESTIGATION (WinRT raw-MAC pairing ->
+│                          generic bond -> crashes; NOT the setup path -- pair via
+│                          Windows Settings > Add device as an audio device instead)
+├── pair_glasses_audio.py   audio-pairing INVESTIGATION + diagnostics (--probe / --unpair).
+│                          Proved programmatic audio pairing isn't reachable; kept for
+│                          the finding and the diagnostics, NOT the setup path
 ├── probe_rfcomm.py         low-level RFCOMM connectivity probe
 ├── selftest.py            offline validation suite (no hardware needed)
 ├── captured_init.txt      reference init-message sequence from a real capture
@@ -616,8 +664,10 @@ myvu_client/
     ├── rfcomm.py           classic-BT transport + framing, fixed-channel socket connect
     ├── rfcomm_winrt.py     classic-BT transport connecting by SDP-resolved UUID (the
     │                      one that actually reaches the real app-relay channel)
-    ├── rfcomm_pair.py      WinRT-based classic-BT pairing (see pair_glasses.py)
+    ├── rfcomm_pair.py      WinRT pairing investigation + diagnostics (probe_endpoints,
+    │                      unpair, discover_and_pair_as_audio -- see pair_glasses*.py)
     ├── hfp.py              minimal Hands-Free Profile Audio-Gateway responder
+    │                      (fallback for glasses not paired as an audio device)
     └── rfcomm_client.py    classic-BT client -- same AppLayerMixin as client.py, just
                            swap which transport (rfcomm.py or rfcomm_winrt.py) it holds
 ```

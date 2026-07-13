@@ -1,31 +1,46 @@
-"""Pair the MYVU glasses AS AN AUDIO DEVICE, programmatically, by replicating
-what Windows Settings > Add device does: a real Bluetooth inquiry-scan
-discovery first (so Windows learns the glasses are an audio device offering
-HFP + A2DP), then pairing the discovered device -- which brings up those
-audio profiles.
+"""INVESTIGATION + DIAGNOSTICS for classic-BT pairing of the MYVU glasses.
+This is NOT the setup path -- see below.
 
-This is the STABLE pairing. Pairing by raw MAC (the old pair_glasses.py) made
-a bare/generic "Other devices" data pairing with no audio profiles, which
-caused the glasses to reboot/crash. Pairing as an audio device gives the
-glasses the phone-shaped connection their firmware expects, and they stay
-stable. Once paired this way, run:
+>>> HOW TO ACTUALLY PAIR (the settled, working answer): use Windows
+    Settings > Add device > Bluetooth to pair "MYVU DC47" as an AUDIO device,
+    then REMOVE it from the Settings "Other devices" section (leave the
+    "Audio devices" entry). Then run:  python run_glasses.py <MAC> --no-hfp
 
-    python run_glasses.py 2C:6F:4E:00:DC:47 --no-hfp
+Why not this script: programmatic audio pairing was investigated thoroughly
+and DOES NOT WORK on this device -- confirmed empirically, not assumed:
 
-(--no-hfp because Windows now holds the Hands-Free connection natively.)
+  * Pairing by raw MAC (pair_glasses.py) -> generic classic bond in
+    "Other devices" (no audio profiles) -> the glasses REBOOT/crash.
+  * This script's approach -- discover over BLE (the only transport the
+    glasses advertise on; they don't answer a classic inquiry) and pair the
+    discovered device -> a BLE-ONLY bond, still in "Other devices", still not
+    the audio pairing.
+  * The --probe diagnostic (below) enumerated every unpaired thing Windows can
+    see for the glasses -- classic endpoint, BLE endpoint, device container --
+    over a fair scan: ONLY the BLE endpoint is reachable. There is no classic
+    endpoint or container for app-level WinRT to pair. The Settings "Add
+    device" wizard succeeds only because it runs with system-level access that
+    bridges BLE discovery to a classic audio pairing; the public WinRT pairing
+    API cannot.
 
-!! UNTESTED end-to-end against the glasses as of writing -- see the docstring
-in myvu/rfcomm_pair.discover_and_pair_as_audio. It re-enters the pairing flow,
-so run it carefully, once, with the glasses awake and nearby. If it produces
-the audio pairing it should be the stable kind; if the glasses start rebooting
-anyway, turn OFF Bluetooth immediately and let them settle.
+So the glasses' firmware wants a phone-shaped AUDIO connection (HFP/A2DP), and
+only Windows' own wizard can establish that. This file is kept for the finding
+and for two genuinely useful, safe subcommands:
 
-Prerequisite: the glasses must NOT already be paired (an already-paired device
-won't show up in the unpaired-only discovery scan). If they're already paired,
-you don't need this -- just use run_glasses.py.
+  --probe    enumerate every unpaired endpoint/container Windows sees for the
+             glasses (no pairing attempted). The diagnostic that proved the
+             above. Needs the glasses awake and unpaired.
+  --unpair   programmatically remove an ACTIVE bond (BLE and/or classic) via
+             unpair_async -- handy right after a wrong bond gets created.
+             (Cannot purge a stale cached "Other devices" entry that isn't an
+             active pairing; use Settings > Remove device for that.)
+
+Running with no subcommand still attempts the (known-not-to-produce-audio)
+discover-and-pair, for the record / for anyone wanting to re-verify.
 
 Usage:
-  python pair_glasses_audio.py 2C:6F:4E:00:DC:47
+  python pair_glasses_audio.py 2C:6F:4E:00:DC:47 --probe     # safe diagnostic
+  python pair_glasses_audio.py 2C:6F:4E:00:DC:47 --unpair    # remove active bond
 """
 from __future__ import annotations
 
@@ -34,7 +49,7 @@ import asyncio
 import logging
 import sys
 
-from myvu.rfcomm_pair import discover_and_pair_as_audio, probe_endpoints
+from myvu.rfcomm_pair import discover_and_pair_as_audio, probe_endpoints, unpair
 
 
 def main() -> None:
@@ -52,12 +67,26 @@ def main() -> None:
                          "Windows can see for the glasses (classic, BLE, container) and "
                          "print what's pairable. No pairing attempted. Needs the glasses "
                          "awake and unpaired.")
+    ap.add_argument("--unpair", action="store_true",
+                    help="programmatically remove an ACTIVE pairing (BLE and/or classic) "
+                         "for the glasses via unpair_async. Useful to tear down a wrong "
+                         "BLE bond this script created. Does NOT purge a stale cached "
+                         "entry in Settings > Other devices (use Settings for that).")
     ap.add_argument("--yes", action="store_true", help="skip the confirmation prompt")
     ap.add_argument("--debug", action="store_true")
     args = ap.parse_args()
 
     logging.basicConfig(level=logging.DEBUG if args.debug else logging.INFO,
                         format="%(asctime)s %(levelname)-7s %(name)s: %(message)s")
+
+    if args.unpair:
+        ok = asyncio.run(unpair(args.address))
+        if ok:
+            print("\nNo active pairing remains for the glasses.")
+        else:
+            print("\nAn endpoint is still paired -- see log output above.")
+            sys.exit(1)
+        return
 
     if args.probe:
         results = asyncio.run(probe_endpoints(args.address))
