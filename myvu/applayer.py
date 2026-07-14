@@ -607,8 +607,11 @@ class AppLayerMixin:
             return
         code = msg.get("code")
         control = msg.get("payload", {}).get("control")
-        if code == 7:  # wake word -- start unless it's an explicit close
+        if code == 7:  # wake word -- start, or close (control:0)
             if control == 0:
+                rcb = getattr(self, "_ai_button_release_callback", None)
+                if rcb is not None:
+                    asyncio.create_task(rcb())
                 return
             cb = getattr(self, "_ai_button_callback", None)
             log.info("wake word detected on glasses (code:7, callback=%s)",

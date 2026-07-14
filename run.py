@@ -237,12 +237,22 @@ async def repl(client) -> None:
             vstate["active"] = False
             vstate["stop"] = False
 
+    async def _ai_page_closed():
+        # The glasses closed the AI page (code:3/code:7 control:0 = CLOSE).
+        # Stop our conversation loop too -- otherwise we keep recording the mic
+        # and transcribing after the user has already exited the AI page.
+        if vstate["active"] and not vstate["stop"]:
+            vstate["stop"] = True  # aborts the in-progress record via should_stop
+            print("[AI] glasses closed the AI page — stopping.")
+
     # Register on this client AND its sibling (the button press may arrive over
     # either the classic-BT relay or the BLE channel; run_glasses.py sets
-    # rf._sibling = ble). No release handler -- end-of-speech is silence-based.
+    # rf._sibling = ble). The release/close handler stops the loop when the
+    # glasses leave the AI page.
     for _c in (client, getattr(client, "_sibling", None)):
         if _c is not None:
             _c._ai_button_callback = _ai_button_down
+            _c._ai_button_release_callback = _ai_page_closed
     print(HELP)
     while True:
         if not client.is_connected:
