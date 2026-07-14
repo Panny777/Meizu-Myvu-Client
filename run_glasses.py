@@ -58,6 +58,11 @@ async def do_run(address: str, own_mac: str, uuid_wait: float, use_hfp: bool) ->
         rf.start_drains()
         await rf.send_init_burst()
 
+        # Let capture_mic()/AI-button handling on the REPL client (rf) also arm
+        # the BLE client -- the glasses may stream mic audio (or send the button
+        # press) over either channel, so both need to be listening.
+        rf._sibling = ble
+
         if use_hfp:
             hfp = HfpAgResponder(address)
             await hfp.connect()
@@ -74,6 +79,7 @@ async def do_run(address: str, own_mac: str, uuid_wait: float, use_hfp: bool) ->
                 "device. This is the stable path -- see README.")
 
         await asyncio.sleep(1.0)
+        await rf.sync_time()  # match the glasses' clock to this PC on connect
         await repl(rf)
     finally:
         if hfp:

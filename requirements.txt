@@ -4,3 +4,8 @@ anthropic>=0.40.0
 python-dotenv>=1.0.1
 winsdk>=1.0.0b10; sys_platform == "win32"  # classic-BT pairing experiment, see pair_glasses.py
 pywin32; sys_platform == "win32"  # COM apartment control (pythoncom) needed by rfcomm_pair.py
+# voice assistant (myvu/voice.py): record the glasses' Windows HFP mic + Groq STT
+sounddevice>=0.5.0
+scipy>=1.11.0
+numpy>=1.24.0
+openai>=1.30.0  # used against Groq's OpenAI-compatible endpoint (needs GROQ_API_KEY)

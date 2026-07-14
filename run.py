@@ -13,6 +13,7 @@ import argparse
 import asyncio
 import logging
 import os
+import uuid
 
 from dotenv import load_dotenv
 
@@ -129,6 +130,11 @@ commands:
       Call setq with no argument to see the current question. Example:
       setq What is the weather like today?
 
+  synctime
+      Push this PC's wall-clock time and UTC offset to the glasses so their
+      clock matches (action 'SyncOffSetTime', same as the official app). This
+      runs automatically on connect; use it to re-sync manually.
+
   help            show this help
   quit / q        disconnect and exit
 """
@@ -137,36 +143,88 @@ commands:
 async def repl(client) -> None:
     loop = asyncio.get_event_loop()
 
-    # Pre-set question sent when the glasses AI button is pressed.
-    # The glasses give us a 2-second window (muteTimeout=2000ms from WakeupControl)
-    # before they time out and show "service error".  A blocking input() call
-    # always exceeds that window, so we respond instantly with this stored question.
-    # Use  setq <question>  in the REPL to change it.
+    # Preset question used as a fallback if voice input isn't available
+    # (glasses not connected as a Windows audio device, or STT fails).
     ai_button_question = ["What time is it?"]
 
-    async def _glasses_ai_trigger():
-        """Called when the glasses' AI button is pressed (code:3 control:1).
+    # --- real voice assistant: AI button starts a listening session ---------
+    # The AI button is a SHORT press that *starts* a conversation (not
+    # hold-to-talk). On press we send code:4 (session ack) and record the
+    # glasses' Windows HFP mic until you stop speaking (silence detection),
+    # transcribe with Groq, answer, and SPEAK it over A2DP. Then -- like the
+    # real glasses -- we loop straight back to listening for a follow-up. The
+    # conversation ends when you stay silent (record times out) or you press
+    # the button again. See myvu/voice.py.
+    from myvu import voice
+    vstate = {"active": False, "stop": False}
 
-        The glasses' AI voice UI requires a real RFCOMM classic-BT audio
-        connection for ASR. Without it the glasses track asr_start_time=''
-        internally and always show 'service error' regardless of what BLE
-        messages we send. We cannot fix this without RFCOMM.
+    # Say any of these (alone) to end the conversation.
+    STOP_PHRASES = {"stop", "goodbye", "good bye", "bye", "exit", "quit",
+                    "that's all", "thats all", "that is all", "never mind",
+                    "nevermind", "thank you", "thanks", "cancel", "end"}
 
-        Instead, we generate an answer via Claude and push it as a
-        notification — confirmed working. The glasses will briefly show their
-        own 'service error' (unavoidable without RFCOMM), then our
-        notification appears with the actual answer.
-        """
-        question = ai_button_question[0]
-        print(f"[AI button] question: {question!r} — generating answer...")
+    def _is_stop_phrase(text: str) -> bool:
+        t = text.strip().lower().rstrip(".!?,")
+        return t in STOP_PHRASES
+
+    async def _speak(answer_text):
+        return await loop.run_in_executor(None, voice.speak, answer_text)
+
+    async def _ai_button_down():
+        if vstate["active"]:
+            # a second press during a conversation -> stop now (this also
+            # aborts an in-progress recording via the should_stop poll below)
+            vstate["stop"] = True
+            print("[AI] stopping...")
+            return
+        vstate["active"] = True
+        vstate["stop"] = False
         try:
-            answer = await client._generate_ai_answer(question)
-            print(f"AI: {answer}")
-            await client.push_notification("AI", answer)
+            turn = 0
+            while not vstate["stop"]:
+                sid = str(uuid.uuid4())
+                await client.ai_session_ack(sid)  # code:4 -- (re)enter listening
+                print("[AI] listening — speak now (say 'stop' to end)..."
+                      if turn == 0 else "[AI] listening for a follow-up "
+                                        "(say 'stop' to end)...")
+                pcm, sr = await loop.run_in_executor(
+                    None, lambda: voice.record_until_silence(
+                        should_stop=lambda: vstate["stop"]))
+                if vstate["stop"]:
+                    break
+                if len(pcm) == 0:
+                    if turn == 0:
+                        print("[AI] mic unavailable or no speech — glasses "
+                              "connected as a Windows audio device?")
+                    else:
+                        print("[AI] no follow-up — conversation ended.")
+                    break
+                print("[AI] transcribing...")
+                text = await loop.run_in_executor(None, voice.transcribe, pcm, sr)
+                if not text:
+                    print("[AI] (no speech recognized) — conversation ended.")
+                    break
+                print(f"[AI] you said: {text!r}")
+                if _is_stop_phrase(text):
+                    print("[AI] stop phrase heard — conversation ended.")
+                    break
+                await client.ai_send_recognized(sid, text)  # caption of your words
+                ans = await client._generate_ai_answer(text)
+                print(f"AI: {ans}")
+                await client.ai_send_answer(ans, speak=_speak)  # SPEAK over A2DP
+                turn += 1
         except Exception as e:  # noqa: BLE001
-            print(f"[AI trigger] error: {e}")
+            print(f"[AI] error: {e}")
+        finally:
+            vstate["active"] = False
+            vstate["stop"] = False
 
-    client._ai_button_callback = _glasses_ai_trigger
+    # Register on this client AND its sibling (the button press may arrive over
+    # either the classic-BT relay or the BLE channel; run_glasses.py sets
+    # rf._sibling = ble). No release handler -- end-of-speech is silence-based.
+    for _c in (client, getattr(client, "_sibling", None)):
+        if _c is not None:
+            _c._ai_button_callback = _ai_button_down
     print(HELP)
     while True:
         if not client.is_connected:
@@ -212,6 +270,8 @@ async def repl(client) -> None:
                     print("usage: query <action-name>, e.g. query get_device_info")
                 else:
                     await client.query(arg)
+            elif cmd == "synctime":
+                await client.sync_time()
             elif cmd == "raw":
                 await client.send_action(arg)
             elif cmd == "ask":
@@ -227,6 +287,12 @@ async def repl(client) -> None:
                 else:
                     ai_button_question[0] = arg
                     print(f"AI button question set to: {arg!r}")
+            elif cmd == "capturemic":
+                secs = float(arg) if arg else 6.0
+                print(f"capturing mic for {secs:.0f}s — PRESS THE AI BUTTON and speak...")
+                stats = await client.capture_mic(secs)
+                print(f"captured {stats['frames']} frames, {stats['bytes']} bytes "
+                      f"-> {stats['path']} (see log for codec head bytes)")
             else:
                 print(f"unknown command: {cmd!r} (try 'help')")
         except Exception as e:  # noqa: BLE001
@@ -244,6 +310,7 @@ async def do_run(address: str, own_mac: str, bt_status: int,
         client.start_drains()          # print glasses responses live
         await client.send_init_burst()
         await asyncio.sleep(1.5)
+        await client.sync_time()  # match the glasses' clock to this PC on connect
         await repl(client)
     finally:
         await client.close()

@@ -21,6 +21,10 @@ ENV/
 # environment variables
 .env
 
+# ---- Voice-assistant capture artifacts (runtime output, not source) ----
+mic_capture.bin
+*.wav
+
 # Editor / OS
 .vscode/
 .idea/

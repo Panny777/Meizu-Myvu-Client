@@ -165,6 +165,27 @@ class AppLayerMixin:
             "streamType": stream_type, "needReply": False}}
         await self.send_action(json.dumps(payload, separators=(",", ":")))
 
+    async def sync_time(self) -> None:
+        """Push the local wall-clock time + UTC offset to the glasses so their
+        clock matches this PC. Mirrors SuperMessageManger.sendOffsetTimeToGlass
+        (k0) in the official app: action 'SyncOffSetTime' with data
+        {syncTimeData: epoch-millis-as-string, timeZoneOffSet: offset-in-millis}.
+        The glasses request this themselves (they send 'SyncOffSetTime' with no
+        data on connect), but sending it proactively also works."""
+        import time as _time
+        now = _time.time()
+        epoch_ms = int(now * 1000)
+        # local UTC offset in milliseconds (e.g. UTC+3 -> 10800000)
+        offset_ms = -_time.timezone * 1000
+        if _time.localtime(now).tm_isdst and _time.daylight:
+            offset_ms = -_time.altzone * 1000
+        payload = {"action": "SyncOffSetTime", "data": {
+            "syncTimeData": str(epoch_ms), "timeZoneOffSet": offset_ms}}
+        await self.send_action(json.dumps(payload, separators=(",", ":")))
+        log.info("synced time to glasses: %s (offset %+d min)",
+                 _time.strftime("%Y-%m-%d %H:%M:%S", _time.localtime(now)),
+                 offset_ms // 60000)
+
     async def set_brightness(self, value: int) -> None:
         """Set the glasses' screen brightness (observed range roughly 0-10).
         Matches SuperMessageManger.n0() in the official app."""
@@ -272,48 +293,172 @@ class AppLayerMixin:
           glasses exit 'listening' state immediately.
         """
         session_id = str(uuid.uuid4())
+        # Pre-generate so the whole code: sequence fires without a gap (a Claude
+        # call mid-flow leaves a hole that trips the glasses' timeout).
+        answer = await self._generate_ai_answer(question)
+        await self.ai_session_ack(session_id)
+        await self.ai_send_recognized(session_id, question)
+        await self.ai_send_answer(answer)
+        return answer
 
-        async def send_code(code: int, payload) -> None:
-            msg = {"code": code, "payload": payload}
+    async def _ai_send_code(self, code: int, payload) -> None:
+        """Send one AI-assistant code: message through the relay (ai.assistant
+        source and dest, matching the capture)."""
+        msg = {"code": code, "payload": payload}
+        await self.send_action(json.dumps(msg, separators=(",", ":")),
+                               source_pkg=AI_PKG, target_pkg=AI_PKG)
+
+    async def ai_session_ack(self, session_id: str) -> None:
+        """code:4 -- the phone's response to the glasses' AI-button press. THE
+        message the glasses wait for; without it they show 'service error'.
+        Reconstructed from btcsnoop_hci_full_session.log. Send this promptly
+        after the button press (before doing slow work like recording/STT) so
+        the session stays alive."""
+        await self._ai_send_code(4, {"hasNetwork": True, "message": "唤醒成功",
+                                     "sessionId": session_id, "success": True})
+        await asyncio.sleep(0.1)
+
+    async def ai_send_recognized(self, session_id: str, text: str) -> None:
+        """VAD start -> ASR partial+final (`text` shown as the recognized
+        speech) -> VAD end. `text` is whatever we recognized (real STT of the
+        mic, or a preset question)."""
+        await self._ai_send_code(104, {"type": 1, "sessionId": session_id})
+        await asyncio.sleep(0.1)
+        await self._ai_send_code(101, {"id": session_id, "isOfflineResult": False,
+                                       "text": text, "type": 0})
+        await asyncio.sleep(0.1)
+        await self._ai_send_code(101, {"id": session_id, "isOfflineResult": False,
+                                       "text": text, "type": 1})
+        await asyncio.sleep(0.1)
+        await self._ai_send_code(104, {"type": 2, "sessionId": session_id})
+        await asyncio.sleep(0.1)
+
+    async def ai_send_answer(self, answer: str, speak=None) -> None:
+        """Deliver the AI answer. The real glasses SPEAK it over A2DP (confirmed
+        from the capture -- only ASR captions + play-state come over the relay,
+        no answer text). So if `speak` is given (an async callable that plays
+        TTS out the glasses' A2DP speaker), we send code:6 playState:1, await
+        `speak` (the answer is spoken), then playState:2 -- matching the real
+        flow. If `speak` is None we fall back to a notification (text stand-in),
+        unless ai_answer_as_notification is False.
+
+        code:5 (ChatGPT-style card) is still sent first in case the glasses
+        render a text card too; it's harmless if they don't."""
+        await self._ai_send_code(5, {"id": "", "isContinuous": False, "isMulti": False,
+                                     "isWakeup": False,
+                                     "wakeupControl": {"control": 6, "muteTimeout": 2000,
+                                                       "scene": "", "extra": ""},
+                                     "ttsData": {"text": answer, "isChatGpt": True,
+                                                 "nextStep": 0}})
+        await asyncio.sleep(0.05)
+        await self._ai_send_code(6, {"id": "", "isContinuous": False, "isMulti": False,
+                                     "isWakeup": False, "playState": 1})
+        spoke = False
+        if speak is not None:
+            try:
+                spoke = bool(await speak(answer))
+            except Exception as e:  # noqa: BLE001
+                log.warning("TTS playback failed: %s", e)
+        else:
+            await asyncio.sleep(0.2)
+        await self._ai_send_code(6, {"id": "", "isContinuous": False, "isMulti": False,
+                                     "isWakeup": False, "playState": 2})
+        await asyncio.sleep(0.2)
+        await self._ai_send_code(107, {"control": 4, "isOffline": False})
+        # If we couldn't speak it, fall back to the visible notification.
+        if not spoke and getattr(self, "ai_answer_as_notification", True):
+            await asyncio.sleep(0.3)
+            await self.push_notification("AI", answer, app_name="AI")
+
+    # ----------------------------------------------------------- mic capture
+    async def capture_mic(self, seconds: float = 6.0,
+                          out_path: str = "mic_capture.bin") -> dict:
+        """Capture raw microphone audio streamed by the glasses.
+
+        The glasses only stream mic audio after the AI button is pressed AND
+        the phone acks the session with code:4. So this arms an audio collector,
+        temporarily makes the AI-button press send *only* code:4 (session ack,
+        no ASR faking) so the glasses start streaming, waits `seconds`, then
+        saves the raw audio.
+
+        The mic audio arrives as code:109 StMessages with the binary chunk in
+        protobuf field 5 (~242 B each, ~50ms apart) -- see _maybe_capture_audio.
+        The user must PRESS THE AI BUTTON and speak during the window.
+
+        Returns {frames, bytes, path}; also logs the first frame's head so the
+        codec can be identified from the concatenated output file.
+        """
+        # Arm the collector on THIS client and on a sibling client if one is
+        # registered (run_glasses.py sets rf._sibling = ble): the glasses may
+        # stream the mic audio over the BLE channel rather than the classic-BT
+        # relay, and we don't know which up front -- so listen on both. Both
+        # point at the SAME list so frames land in one buffer regardless.
+        frames_buf: list = []
+        self._mic_capture = frames_buf
+        sibling = getattr(self, "_sibling", None)
+        if sibling is not None:
+            sibling._mic_capture = frames_buf
+        session_id = str(uuid.uuid4())
+        prev_cb = getattr(self, "_ai_button_callback", None)
+
+        async def _capture_button_cb():
+            msg = {"code": 4, "payload": {"hasNetwork": True, "message": "唤醒成功",
+                                          "sessionId": session_id, "success": True}}
             await self.send_action(json.dumps(msg, separators=(",", ":")),
                                    source_pkg=AI_PKG, target_pkg=AI_PKG)
+            log.info("capture: sent code:4 session ack -- glasses should start "
+                     "streaming mic audio now; keep speaking")
 
-        # 1. VAD start — mic detected speech beginning
-        await send_code(104, {"type": 1, "sessionId": session_id})
-        await asyncio.sleep(0.1)
+        self._ai_button_callback = _capture_button_cb
+        sib_prev_cb = getattr(sibling, "_ai_button_callback", None) if sibling else None
+        if sibling is not None:
+            sibling._ai_button_callback = _capture_button_cb
+        try:
+            log.info(">>> PRESS THE AI BUTTON AND SPEAK NOW (%.0fs window) <<<", seconds)
+            await asyncio.sleep(seconds)
+        finally:
+            self._ai_button_callback = prev_cb
+            self._mic_capture = None
+            if sibling is not None:
+                sibling._ai_button_callback = sib_prev_cb
+                sibling._mic_capture = None
+            frames = frames_buf
 
-        # 2. ASR final result — send immediately so glasses exit 'listening' UI
-        #    (type:1 = final; the glasses need this before their internal timeout)
-        await send_code(101, {"id": session_id, "isOfflineResult": False,
-                              "text": question, "type": 1})
-        await asyncio.sleep(0.1)
+        audio = b"".join(frames)
+        with open(out_path, "wb") as fh:
+            fh.write(audio)
+        sizes = [len(x) for x in frames]
+        if frames:
+            log.info("captured %d frames, %d bytes -> %s  (sizes min/max/avg=%d/%d/%.0f)",
+                     len(frames), len(audio), out_path,
+                     min(sizes), max(sizes), sum(sizes) / len(sizes))
+            log.info("first frame head (hex): %s", frames[0][:32].hex())
+            log.info("second frame head (hex): %s",
+                     frames[1][:32].hex() if len(frames) > 1 else "(only one frame)")
+        else:
+            log.warning("captured NO audio frames -- did the AI button get pressed? "
+                        "did code:4 go out? is the connection the classic-BT relay?")
+        return {"frames": len(frames), "bytes": len(audio), "path": out_path}
 
-        # 3. VAD end — speech finished, NLU processing begins
-        await send_code(104, {"type": 2, "sessionId": session_id})
-
-        # 4. Generate answer while glasses show the question text
-        answer = await self._generate_ai_answer(question)
-
-        # 5. TTS content — we send our generated text as the AI response
-        await send_code(5, {"id": "", "isContinuous": False, "isMulti": False,
-                            "isWakeup": False,
-                            "wakeupControl": {"control": 6, "muteTimeout": 2000,
-                                              "scene": "", "extra": ""},
-                            "ttsData": {"text": answer, "isChatGpt": False,
-                                        "nextStep": 0}})
-        await asyncio.sleep(0.1)
-
-        # 6. TTS playState:1 (playing) then playState:2 (done)
-        await send_code(6, {"id": "", "isContinuous": False, "isMulti": False,
-                            "isWakeup": False, "playState": 1})
-        await asyncio.sleep(0.2)
-        await send_code(6, {"id": "", "isContinuous": False, "isMulti": False,
-                            "isWakeup": False, "playState": 2})
-        await asyncio.sleep(0.2)
-
-        # 7. Back to idle
-        await send_code(107, {"control": 4, "isOffline": False})
-        return answer
+    def _maybe_capture_audio(self, payload: bytes) -> bool:
+        """If a mic capture is armed and `payload` is a code:109 mic-audio
+        StMessage, extract the binary audio (protobuf field 5) into the buffer.
+        Returns True if this was a code:109 audio frame (so the caller can skip
+        the normal JSON logging -- there are hundreds of these per utterance)."""
+        cap = getattr(self, "_mic_capture", None)
+        if cap is None:
+            return False
+        try:
+            f = linkproto.pb_parse(payload)
+        except Exception:  # noqa: BLE001
+            return False
+        json_field = f.get(4, [b""])[0]
+        if b'"code":109' not in json_field:
+            return False
+        audio = f.get(5, [None])[0]
+        if audio:
+            cap.append(audio)
+        return True
 
     # -------------------------------------------------------------- receive
     async def _on_relay_frame(self, payload: bytes) -> None:
@@ -347,6 +492,8 @@ class AppLayerMixin:
         glasses when the user presses the dedicated AI key. We surface it at
         INFO level and fire self._ai_button_callback() if one is registered.
         """
+        if self._maybe_capture_audio(payload):
+            return  # code:109 mic-audio frame -- collected, skip JSON logging
         text = payload.decode("utf-8", "replace")
         objs = _find_json_objects(text)
         if objs:
@@ -354,8 +501,26 @@ class AppLayerMixin:
                 if len(o) > 4:
                     log.debug("APP <- %s", o)
                     self._check_ai_trigger(o)
+                    self._check_time_sync_request(o)
         else:
             log.debug("APP <- (raw %d B) %s", len(payload), payload.hex())
+
+    def _check_time_sync_request(self, json_str: str) -> None:
+        """The glasses ask for the wall-clock time by sending a launcher action
+        'SyncOffSetTime' with no data (SuperMessageManger case -1932804357 ->
+        k0() in the official app). Reply with the real time. We ignore messages
+        that already carry 'syncTimeData' so we never echo our own reply."""
+        try:
+            msg = json.loads(json_str)
+        except (json.JSONDecodeError, ValueError):
+            return
+        if msg.get("action") != "SyncOffSetTime":
+            return
+        data = msg.get("data")
+        if isinstance(data, dict) and data.get("syncTimeData"):
+            return  # this is a time payload (ours), not a request
+        log.info("glasses requested time sync -- replying")
+        asyncio.create_task(self.sync_time())
 
     def _check_ai_trigger(self, json_str: str) -> None:
         """Detect code:3 control:1 (AI button pressed on glasses) and fire
@@ -369,9 +534,13 @@ class AppLayerMixin:
             return
         control = msg.get("payload", {}).get("control")
         if control == 1:
-            log.info("AI button pressed on glasses -- use 'ask <question>' or set a callback")
             cb = getattr(self, "_ai_button_callback", None)
+            log.info("AI button pressed on glasses (callback=%s)",
+                     "set" if cb is not None else "NONE -- no handler on this channel")
             if cb is not None:
                 asyncio.create_task(cb())
         elif control == 0:
             log.debug("AI button released / glasses stopped listening (code:3 control:0)")
+            rcb = getattr(self, "_ai_button_release_callback", None)
+            if rcb is not None:
+                asyncio.create_task(rcb())
