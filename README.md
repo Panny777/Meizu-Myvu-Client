@@ -3,9 +3,10 @@
 A from-scratch Python client that talks directly to Meizu MYVU (Star Air,
 model `XGA010C`) AR glasses over Bluetooth — **no phone, no official app
 required**. It performs the real app-layer pairing handshake, joins the
-glasses' session, and can push notifications, drive the teleprompter, and
-read live telemetry, all reverse-engineered from a decompiled APK and a
-Bluetooth packet capture of the official app.
+glasses' session, and can push notifications, drive the teleprompter, run a
+full voice AI assistant (wake word → speak → spoken answer), sync the clock,
+change system settings, and read live telemetry — all reverse-engineered from a
+decompiled APK and a Bluetooth packet capture of the official app.
 
 > **Status:** both transports are fully working and confirmed live — a
 > notification sent from this script displays on the lens with zero phone
@@ -24,6 +25,7 @@ Bluetooth packet capture of the official app.
 - [Why this exists](#why-this-exists)
 - [Features](#features)
 - [Quick start](#quick-start)
+- [The voice AI assistant](#-the-voice-ai-assistant)
 - [How it works](#how-it-works)
 - [Protocol deep dive](#protocol-deep-dive) *(the full reverse-engineering writeup)*
 - [Troubleshooting](#troubleshooting)
@@ -53,15 +55,24 @@ scripts, home automation, other platforms — instead of only the official app.
 - 📜 **Teleprompter control** — open it and load arbitrary text. Requires the
   classic-BT link (`python run_glasses.py`, not plain `run.py` — see
   [Classic-Bluetooth (RFCOMM)](#classic-bluetooth-rfcomm--how-the-teleprompter-got-working))
+- 🎙️ **Full voice AI assistant** — press the AI button (or say the wake word
+  **"小溪小溪" / "Hey Aicy"**) and speak: your words are transcribed with Groq
+  Whisper, answered with the Claude API, shown as a **streaming caption** on the
+  AI page, and **spoken back over the glasses' A2DP speaker** in a natural Groq
+  voice — a continuous, multi-turn conversation. See
+  [The voice AI assistant](#-the-voice-ai-assistant). (`ask <question>` remains
+  as a text-only variant.)
+- ⏰ **Automatic clock sync** — the glasses' clock is set from this PC on connect
+  (and whenever the glasses request it), mirroring the official app's
+  `SyncOffSetTime`
 - 🔊 **Volume, brightness, WiFi, and standby-widget control**
+- ⚙️ **System settings** — language, device name, screen-off timeout, zen/DND,
+  air (minimal) mode, wear detection, music touch-panel mode — all matching the
+  official app's `ControlUtils` payloads
 - 🔍 **Query any device status** (battery, language, zen mode, WiFi list, ...)
 - 🛠️ **Send any app command** via `send_action()` — the protocol vocabulary is
   fully documented below, so new features are a small addition, not a new
   reverse-engineering project
-- 🤖 **`ask <question>`** — a text-only stand-in for the AI assistant: generates
-  an answer with the Claude API (Haiku 4.5) and pushes it to the lens as a
-  caption through the same JSON channel the real assistant uses (no
-  microphone/speaker audio required — see [Layer 7](#layer-7--driving-features-applayerpy))
 - 🧪 **Offline self-test suite** — every protocol layer is validated against
   real captured bytes, no hardware required to verify correctness
 - 💬 **Interactive REPL** for driving the glasses live from the terminal
@@ -110,11 +121,24 @@ myvu> ask What's a good icebreaker for a team meeting?
 | `fov <0-3>` | set the field-of-view position of the standby widgets (confirmed range) |
 | `query <action>` | send a no-arg status query; reply lands in `myvu.log`, not inline |
 | `raw <json>` | send any raw app-action JSON |
-| `ask <question>` | generate a Claude answer and push it to the lens as text (see [Layer 7](#layer-7--driving-features-applayerpy)) |
+| `ask <question>` | generate a Claude answer and push it to the lens as text (the text-only variant of the [voice assistant](#-the-voice-ai-assistant)) |
+| `synctime` | re-push this PC's clock to the glasses (also runs automatically on connect) |
+| `lang <language> <country>` | set the glasses' language, e.g. `lang en US` |
+| `name <text>` | rename the glasses |
+| `screenoff <seconds>` | display auto-off timeout, e.g. `screenoff 30` |
+| `zen [on\|off]` | do-not-disturb (default on) |
+| `air [on\|off]` | minimal mode — **closes all apps** and may restrict functions (default on) |
+| `wear [on\|off]` | auto on/off when worn (default on) |
+| `musictp [on\|off]` | music touch-panel control mode (default on) |
 | `help` / `q` | show detailed help for every command / disconnect and exit |
 
+The **AI button** and **wake word** are hardware triggers, not typed commands —
+they start the [voice assistant](#-the-voice-ai-assistant).
+
 `ask` needs the `anthropic` package (already in `requirements.txt`) and an API
-key — set `ANTHROPIC_API_KEY`, or run `ant auth login`.
+key — set `ANTHROPIC_API_KEY`, or run `ant auth login`. The **voice assistant**
+additionally needs `GROQ_API_KEY` (for speech-to-text and text-to-speech) — put
+both keys in a `.env` file in `myvu_client/`.
 
 Run `help` in the REPL for a longer description of each command, including the
 full list of known `query` action names.
@@ -179,6 +203,64 @@ it. (If you ever run against glasses *not* paired as an audio device, drop
 
 Windows only (it uses `winsdk`'s WinRT Bluetooth APIs for SDP-by-UUID RFCOMM
 resolution — see the section below for exactly why that's necessary).
+
+## 🎙️ The voice AI assistant
+
+Unlike the earlier text-only `ask`, this drives the glasses' AI page the way the
+real phone does — **speak a question, see your words appear, hear the answer
+spoken back** — and loops into a continuous conversation. It runs on top of the
+same `run_glasses.py` classic-BT session:
+
+```bash
+python run_glasses.py <BT-ADDRESS> --no-hfp
+```
+
+**How to trigger it (hardware, not a typed command):**
+- **Press the AI button** on the glasses, or
+- **Say the wake word** — **"小溪小溪"** (Xiǎoxī Xiǎoxī) or its English variant
+  **"Hey Aicy"**. These are the only phrases the glasses' on-device keyword
+  spotter is trained for; the wake word isn't a free-text setting (see below).
+
+**What happens on each turn:**
+1. The glasses send an AI-start message over the relay — `code:3` for the button
+   (`CODE_START_VR_REQ`) or `code:7` for the wake word (`CODE_VOICE_WAKEUP_VR_REQ`).
+2. We record from the glasses' **Windows HFP microphone** until you stop speaking
+   (silence detection), then transcribe with **Groq Whisper**
+   (`whisper-large-v3-turbo`).
+3. Your words are pushed back as a **streaming caption** — a series of growing
+   `code:101` partial ASR results, matching how the real glasses render a
+   building caption — then the final.
+4. An answer is generated with the **Claude API**, and **spoken over the glasses'
+   A2DP speaker** using a natural **Groq (Orpheus) voice** (default `hannah`),
+   with Windows SAPI as an offline fallback.
+5. The assistant returns to listening for a follow-up. The conversation ends when
+   you stay silent, **say a stop phrase** ("stop", "goodbye", "that's all", …),
+   or press the AI button again.
+
+**Requirements:**
+- The glasses must be paired to Windows as an **audio device** (see the
+  teleprompter setup above) — that's what exposes the HFP mic and A2DP speaker as
+  normal Windows audio devices. Keep them set as the audio device; do **not** set
+  the MYVU as the Windows default mic, or its audio is routed to Windows instead
+  of to our recorder.
+- `GROQ_API_KEY` (STT + TTS) and `ANTHROPIC_API_KEY` (answers) in `myvu_client/.env`.
+
+**Configurable via `.env`** (defaults shown):
+
+```dotenv
+GROQ_STT_MODEL=whisper-large-v3-turbo
+GROQ_TTS_MODEL=canopylabs/orpheus-v1-english
+GROQ_TTS_VOICE=hannah   # options: autumn diana hannah austin daniel troy
+```
+
+**On the wake word / why it isn't customizable:** detection runs as a small
+trained model on the glasses' low-power DSP, re-verified on the real phone by a
+chipset SoundTrigger engine (Qualcomm/Unisoc) that can't run on Windows — so we
+just trust the glasses' first-stage detection and start on `code:7`. Changing to
+an arbitrary phrase would require retraining/deploying a new DSP model, which the
+firmware doesn't expose; the built-in set is "小溪小溪", "Hey Aicy", and
+"Xiaoxi, Xiaoxi". (A truly custom phrase would mean running our own always-on
+keyword spotter on the PC mic instead — not implemented.)
 
 ## How it works
 
@@ -294,7 +376,14 @@ Programmatic API: `client.push_notification(title, content)`,
 `client.set_volume(value)`, `client.set_brightness(value)`,
 `client.toggle_wifi(enable)`, `client.set_standby_position(0-3)`,
 `client.set_fov_pos_type(value)`, `client.query(action_name)`,
-`client.send_action(json_str, target_pkg=...)`, `client.ask_ai(question)`.
+`client.send_action(json_str, target_pkg=...)`, `client.ask_ai(question)`,
+`client.sync_time()`, and the `ControlUtils` settings
+`client.set_language(language, country)`, `client.set_device_name(name)`,
+`client.set_screen_off_time(seconds)`, `client.set_zen_mode(on)`,
+`client.set_air_mode(on)`, `client.set_wear_detection(on)`,
+`client.set_music_tp_control(on)`. Voice-assistant helpers:
+`client.ai_session_ack()`, `client.ai_send_recognized()` (streaming caption),
+`client.ai_send_answer(answer, speak=...)`.
 
 Almost every "system"-category command shares one envelope:
 `{"action":"system","data":{"action":"<verb>", ...}}` — `"system"` is just the
@@ -311,6 +400,14 @@ routing tag, the real command is `data.action`. Reverse-engineered verbs, from
   `toggle_wifi`, `set_standby_position` (**confirmed range 0-3**, sets the
   field-of-view position of the standby widgets while idle),
   `set_fov_pos_type` (meaning not yet confirmed)
+* **`ControlUtils` settings** (wired via `client.set_*`): `set_language`,
+  `set_device_name`, `set_screen_off_time`, `set_zen_mode`, `set_air_mode`
+  (MYVU's minimal mode — **closes all apps**, not airplane mode),
+  `set_wear_detection_mode`, `set_music_tp_control_mode`. These nest their
+  params under a `value` object (`{"action":"system","data":{"action":<verb>,
+  "value":{<key>:<val>}}}`) — unlike `set_volume`/`set_brightness`, which take
+  a flat string value. `run.py`/`run_glasses.py` also apply sensible defaults on
+  connect: **clock sync** (`SyncOffSetTime`), **wear detection on**, **zen off**.
 * **Not user-facing — internal plumbing, don't bother wiring these up**:
   `system_account`/`account_state` (tells the glasses which Flyme account is
   logged in), `system_glass_active`/`req_active_state`/`req_active_info` (an
@@ -320,37 +417,33 @@ routing tag, the real command is `data.action`. Reverse-engineered verbs, from
 * **`do_recovery`** exists in the code — name suggests a factory-reset/recovery
   trigger. Not implemented here on purpose; don't send this one.
 
-#### The real AI assistant's audio path (and why `ask` doesn't need it)
+#### The AI assistant protocol (`com.upuphone.ai.assistant`)
 
-Capture analysis of a live AI-assistant interaction shows three separate
-transports involved, only one of which is the JSON channel this client
-already speaks:
+A live AI interaction uses three transports, all of which we now drive (see
+[The voice AI assistant](#-the-voice-ai-assistant) for the end-to-end flow):
 
-* **Microphone → phone:** continuous 346-byte binary chunks (likely
-  Opus-encoded) sent glasses→phone over the **same classic-BT RFCOMM channel**
-  as the JSON relay (channel 13), every ~40-80ms — not a standard Bluetooth
-  SCO/HFP voice call (HFP negotiates but no SCO audio was observed).
-* **TTS speech → glasses:** plays over standard **A2DP** (phone→glasses),
-  confirmed by packet-timing correlation with the AI-interaction window.
-* **ASR/TTS caption text:** rides the *same* JSON `code`-tagged protocol as
-  everything else in this document (`src`/`dst` = `com.upuphone.ai.assistant`):
-  `code:101` = ASR text (`type:0` partial / `type:1` final), `code:5` =
-  TTS content (`payload.ttsData.text`), `code:6` = TTS play state
-  (`1`=playing, `2`=finished), `code:104` = state change, `code:102` =
-  skill/intent result.
+* **Caption / control text** rides the JSON `code`-tagged protocol
+  (`src`/`dst` = `com.upuphone.ai.assistant`):
+  `code:3`/`code:7` = AI-start (button / wake word), `code:4` = session ack
+  (**required** — without it the glasses show "service error"), `code:101` =
+  ASR text (`type:0` partial / `type:1` final), `code:104` = VAD state,
+  `code:5` = TTS content (`payload.ttsData.text`), `code:6` = TTS play state
+  (`1`=playing, `2`=finished), `code:107` = idle/end.
+* **Microphone → phone:** the glasses' mic. When the glasses are the Windows
+  audio device, Windows decodes the HFP audio to plain PCM and we record it
+  there (the path `voice.py` uses). When they're *not* the Windows mic, the
+  glasses instead stream compressed **Opus** frames over the relay (`code:109`
+  `CODE_RECORD_DATA_TRANS`; the wake-word buffer likewise arrives as Opus via
+  `code:402`).
+* **TTS speech → glasses:** plays over standard **A2DP** (phone→glasses) — the
+  MYVU shows up as a normal Windows output device, which is how `voice.speak()`
+  plays the synthesized answer.
 
-Real mic capture and real TTS playback both need actual SCO/A2DP *audio
-streaming* over classic-BT, which is not implemented (the classic-BT
-transport itself now works — see
-[Classic-Bluetooth (RFCOMM)](#classic-bluetooth-rfcomm--how-the-teleprompter-got-working)
-— but `hfp.py` only does the AG signaling handshake, no real audio path) —
-but the caption **text** doesn't need any of that. `ask_ai()` in
-`applayer.py` generates an answer with the Claude API and pushes it through
-the plain-BLE JSON relay we already fully control, mimicking the real
-assistant's `code:101` → `code:6`(playing) → `code:5` → `code:6`(finished)
-message sequence. This is an experiment: whether the lens visibly reacts to
-these JSON messages alone (vs. requiring real audio activity to unlock that
-UI) hasn't been confirmed against real hardware.
+`ask_ai()` in `applayer.py` is the text-only shortcut: it generates a Claude
+answer and pushes just the caption sequence (`code:4` → `code:101` →
+`code:5`/`code:6`) without recording or playing audio. The full voice loop in
+`run.py` adds the real mic capture, Groq STT, streaming caption, and spoken
+A2DP answer on top of the same messages.
 
 </details>
 
@@ -658,8 +751,11 @@ myvu_client/
     ├── session.py         version negotiation + two-phase ability auth
     ├── tlv.py             TlvBox codec (used by the relay layer)
     ├── relay.py           sequenced application-message relay
-    ├── applayer.py        shared feature API (notify, teleprompter, send_action,
-    │                      send_init_burst -- shared by BLE and classic-BT)
+    ├── applayer.py        shared feature API (notify, teleprompter, AI assistant,
+    │                      time sync, system settings, send_action, send_init_burst
+    │                      -- shared by BLE and classic-BT)
+    ├── voice.py           voice assistant I/O: record the glasses' Windows HFP mic,
+    │                      Groq Whisper STT, Groq (Orpheus)/SAPI TTS out the A2DP speaker
     ├── client.py          BLE client -- ties every layer together
     ├── rfcomm.py           classic-BT transport + framing, fixed-channel socket connect
     ├── rfcomm_winrt.py     classic-BT transport connecting by SDP-resolved UUID (the
