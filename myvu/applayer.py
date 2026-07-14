@@ -318,18 +318,38 @@ class AppLayerMixin:
                                      "sessionId": session_id, "success": True})
         await asyncio.sleep(0.1)
 
-    async def ai_send_recognized(self, session_id: str, text: str) -> None:
-        """VAD start -> ASR partial+final (`text` shown as the recognized
-        speech) -> VAD end. `text` is whatever we recognized (real STT of the
-        mic, or a preset question)."""
+    async def ai_send_recognized(self, session_id: str, text: str,
+                                 stream: bool = True,
+                                 word_delay: float = 0.35) -> None:
+        """VAD start -> streaming ASR partials -> final -> VAD end.
+
+        The real glasses render ASR as a *growing* caption: a series of code:101
+        type:0 partial results, each with a longer prefix of the recognized
+        text, while you're still speaking, then one type:1 final. If we instead
+        send the whole sentence as a single partial+final back-to-back, the
+        caption just flashes and disappears. Since Groq gives us the full text
+        at once, we simulate the stream by emitting growing word-by-word
+        partials with a small delay so the caption stays visible and builds up.
+        Set stream=False for the old one-shot behavior."""
         await self._ai_send_code(104, {"type": 1, "sessionId": session_id})
         await asyncio.sleep(0.1)
-        await self._ai_send_code(101, {"id": session_id, "isOfflineResult": False,
-                                       "text": text, "type": 0})
-        await asyncio.sleep(0.1)
+        words = text.split()
+        if stream and len(words) > 1:
+            partial = ""
+            for w in words:
+                partial = f"{partial} {w}".strip()
+                await self._ai_send_code(101, {"id": session_id,
+                                               "isOfflineResult": False,
+                                               "text": partial, "type": 0})
+                await asyncio.sleep(word_delay)
+        else:
+            await self._ai_send_code(101, {"id": session_id,
+                                           "isOfflineResult": False,
+                                           "text": text, "type": 0})
+            await asyncio.sleep(0.1)
         await self._ai_send_code(101, {"id": session_id, "isOfflineResult": False,
                                        "text": text, "type": 1})
-        await asyncio.sleep(0.1)
+        await asyncio.sleep(0.2)
         await self._ai_send_code(104, {"type": 2, "sessionId": session_id})
         await asyncio.sleep(0.1)
 
@@ -523,16 +543,33 @@ class AppLayerMixin:
         asyncio.create_task(self.sync_time())
 
     def _check_ai_trigger(self, json_str: str) -> None:
-        """Detect code:3 control:1 (AI button pressed on glasses) and fire
-        the registered callback, if any. code:3 control:0 means the glasses
-        stopped listening (timeout or button released)."""
+        """Fire the assistant callback when the glasses ask to start listening.
+
+        Two triggers, both handled the same way:
+          * code:3 (CODE_START_VR_REQ) control:1 -- the AI button was pressed.
+            control:0 means they stopped listening (timeout / button released).
+          * code:7 (CODE_VOICE_WAKEUP_VR_REQ) -- the low-power WAKE WORD
+            ("小溪小溪") fired on the glasses' own DSP. The real phone re-verifies
+            this with a chipset SoundTrigger engine we can't run on Windows, so
+            we just trust the glasses' first-stage detection and start.
+        """
         try:
             msg = json.loads(json_str)
         except (json.JSONDecodeError, ValueError):
             return
-        if msg.get("code") != 3:
-            return
+        code = msg.get("code")
         control = msg.get("payload", {}).get("control")
+        if code == 7:  # wake word -- start unless it's an explicit close
+            if control == 0:
+                return
+            cb = getattr(self, "_ai_button_callback", None)
+            log.info("wake word detected on glasses (code:7, callback=%s)",
+                     "set" if cb is not None else "NONE -- no handler on this channel")
+            if cb is not None:
+                asyncio.create_task(cb())
+            return
+        if code != 3:
+            return
         if control == 1:
             cb = getattr(self, "_ai_button_callback", None)
             log.info("AI button pressed on glasses (callback=%s)",

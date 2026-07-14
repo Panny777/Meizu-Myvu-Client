@@ -30,25 +30,65 @@ GROQ_TTS_VOICE = os.environ.get("GROQ_TTS_VOICE", "hannah")
 _MIC_NAME_HINT = "MYVU DC47"
 
 
+# sounddevice's blocking read/write API doesn't work on the WDM-KS host API
+# ("Blocking API not supported yet" / PaErrorCode -9999), and the MYVU mic and
+# speaker are each exposed under several backends (MME, DirectSound, WASAPI,
+# WDM-KS). Prefer MME (confirmed working for playback), then WASAPI/DirectSound,
+# and never pick WDM-KS.
+_HOSTAPI_PREFERENCE = ("MME", "Windows WASAPI", "Windows DirectSound")
+
+
+def _pick_by_hostapi(candidates):
+    """candidates: list of (index, hostapi_name, ...extra). Return the first
+    entry whose host API is preferred (and not WDM-KS), else the first non-KS
+    entry, else None."""
+    import sounddevice as sd  # noqa: F401  (kept for symmetry / lazy import)
+    non_ks = [c for c in candidates if "WDM-KS" not in c[1] and "Kernel Streaming" not in c[1]]
+    for pref in _HOSTAPI_PREFERENCE:
+        for c in non_ks:
+            if c[1] == pref:
+                return c
+    if non_ks:
+        return non_ks[0]
+    return None
+
+
 def find_myvu_mic() -> tuple[int, int] | None:
-    """Return (device_index, sample_rate) of the MYVU HFP mic, or None."""
+    """Return (device_index, sample_rate) of the MYVU HFP mic, or None.
+    Picks a host API whose blocking API works (avoids WDM-KS)."""
     import sounddevice as sd
+    apis = sd.query_hostapis()
+    cands = []
     for i, d in enumerate(sd.query_devices()):
         if d["max_input_channels"] > 0 and _MIC_NAME_HINT in d["name"]:
             sr = int(d["default_samplerate"]) or 8000
-            return i, sr
-    return None
+            cands.append((i, apis[d["hostapi"]]["name"], sr))
+    pick = _pick_by_hostapi(cands)
+    if pick is None:
+        return None
+    idx, api, sr = pick
+    log.info("MYVU mic -> device %d (%s @ %dHz)", idx, api, sr)
+    return idx, sr
 
 
 def find_myvu_speaker() -> tuple[int, int, int] | None:
     """Return (device_index, sample_rate, channels) of the MYVU A2DP stereo
     output, or None. Preferred over the Hands-Free output for answer playback
-    (A2DP is what the real assistant speaks over)."""
+    (A2DP is what the real assistant speaks over). Picks a host API whose
+    blocking API works (avoids WDM-KS)."""
     import sounddevice as sd
+    apis = sd.query_hostapis()
+    cands = []
     for i, d in enumerate(sd.query_devices()):
         if d["max_output_channels"] > 0 and "MYVU DC47 Stereo" in d["name"]:
-            return i, int(d["default_samplerate"]) or 44100, d["max_output_channels"]
-    return None
+            cands.append((i, apis[d["hostapi"]]["name"],
+                          int(d["default_samplerate"]) or 44100,
+                          d["max_output_channels"]))
+    pick = _pick_by_hostapi(cands)
+    if pick is None:
+        return None
+    idx, api, sr, ch = pick
+    return idx, sr, ch
 
 
 def _groq_tts(text: str):

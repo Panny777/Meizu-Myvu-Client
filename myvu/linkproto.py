@@ -123,6 +123,12 @@ def pb_parse(data: bytes) -> Dict[int, list]:
         elif wire == 1:
             val = data[i:i + 8]
             i += 8
+        elif wire in (3, 4):
+            # Deprecated groups (start/end). Well-formed StarryNet messages
+            # don't use them; hitting one means either a legacy group or, more
+            # commonly, that `data` is misaligned/not the message we expected.
+            # Return what we have so far rather than crashing the caller.
+            break
         else:
             raise ValueError(f"unsupported wire type {wire}")
         out.setdefault(field, []).append(val)

@@ -22,6 +22,7 @@ glasses see an ability set they already accept; only identity fields are patched
 from __future__ import annotations
 
 import json
+import logging
 import time
 
 from . import linkproto
@@ -108,10 +109,18 @@ def build_auth_success_message(device_id_hex: str, device_name: str,
 
 
 def parse_ability_reply(payload: bytes) -> dict:
-    """Decode a glasses auth reply (same 0x02-class envelope)."""
+    """Decode a glasses auth reply (same 0x02-class envelope). Best-effort: an
+    unexpected/misaligned frame (e.g. telemetry arriving where the reply was
+    expected) must not crash the handshake -- we send a static AUTH_SUCCESS
+    afterward regardless, so on a parse failure we just return an empty dict."""
     if payload and payload[0] == AUTH_CLASS_BYTE:
         payload = payload[1:]
-    f = linkproto.pb_parse(payload)
+    try:
+        f = linkproto.pb_parse(payload)
+    except Exception as exc:  # noqa: BLE001
+        logging.getLogger("myvu.session").warning(
+            "could not parse ability reply (%s); continuing handshake", exc)
+        return {"deviceId": ""}
     out = {"deviceId": ""}
     if 3 in f:
         out["deviceId"] = f[3][0].decode("utf-8", "replace")
