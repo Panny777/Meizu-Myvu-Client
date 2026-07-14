@@ -193,6 +193,54 @@ class AppLayerMixin:
             "action": "set_brightness", "value": str(value)}}
         await self.send_action(json.dumps(payload, separators=(",", ":")))
 
+    async def _system_set(self, action: str, value) -> None:
+        """Send a launcher 'system' setting whose params nest under a 'value'
+        object: {"action":"system","data":{"action":<action>,"value":<value>}}.
+        This is the shape ControlUtils uses for the settings below (RESPONSE_VALUE
+        == "value"). NB: set_volume/set_brightness use a *flat* string value and
+        are handled separately -- don't route those through here."""
+        payload = {"action": "system", "data": {"action": action, "value": value}}
+        await self.send_action(json.dumps(payload, separators=(",", ":")))
+
+    async def set_language(self, language: str, country: str) -> None:
+        """Set the glasses' language/country (ControlUtils.set_language). e.g.
+        language='en', country='US' or language='zh', country='CN'."""
+        await self._system_set("set_language",
+                               {"language": language, "country": country})
+
+    async def set_device_name(self, name: str) -> None:
+        """Rename the glasses (ControlUtils.set_device_name)."""
+        await self._system_set("set_device_name", {"device_name": name})
+
+    async def set_screen_off_time(self, seconds: int) -> None:
+        """Set the display auto-off timeout in seconds
+        (ControlUtils.set_screen_off_time)."""
+        await self._system_set("set_screen_off_time",
+                               {"screen_off_time": seconds})
+
+    async def set_zen_mode(self, on: bool) -> None:
+        """Toggle do-not-disturb / zen mode (ControlUtils.set_zen_mode)."""
+        await self._system_set("set_zen_mode", {"zen_mode": on})
+
+    async def set_air_mode(self, on: bool) -> None:
+        """Toggle 'Air Mode' (ControlUtils.set_air_mode) -- MYVU's minimal
+        mode. Per the app's own confirm dialog, enabling it CLOSES ALL APPS
+        and may restrict certain functions (a stripped-back low-power HUD),
+        not airplane mode."""
+        await self._system_set("set_air_mode", {"air_mode": on})
+
+    async def set_wear_detection(self, on: bool) -> None:
+        """Toggle auto on/off when the glasses are worn/removed
+        (ControlUtils.set_wear_detection_mode)."""
+        await self._system_set("set_wear_detection_mode",
+                               {"wear_detection_mode": on})
+
+    async def set_music_tp_control(self, on: bool) -> None:
+        """Toggle music touch-panel control mode
+        (ControlUtils.set_music_tp_control_mode)."""
+        await self._system_set("set_music_tp_control_mode",
+                               {"music_tp_control_mode": on})
+
     async def query(self, sub_action: str) -> None:
         """Send any no-argument 'system' query (e.g. get_device_info,
         get_language, get_zen_mode, get_air_mode, get_screen_off_time,

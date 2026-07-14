@@ -80,6 +80,8 @@ async def do_run(address: str, own_mac: str, uuid_wait: float, use_hfp: bool) ->
 
         await asyncio.sleep(1.0)
         await rf.sync_time()  # match the glasses' clock to this PC on connect
+        await rf.set_wear_detection(True)  # default wear detection on (app default)
+        await rf.set_zen_mode(False)       # default do-not-disturb off
         await repl(rf)
     finally:
         if hfp:

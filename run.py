@@ -45,6 +45,12 @@ def configure_logging(log_file: str = LOG_FILE) -> logging.Handler:
     return console_handler
 
 
+def _onoff(arg: str) -> bool:
+    """Parse an on/off argument for boolean toggle commands. Empty or any of
+    on/1/true/yes/enable -> True; everything else -> False."""
+    return arg.strip().lower() in ("", "on", "1", "true", "yes", "enable", "enabled")
+
+
 async def do_scan() -> None:
     print("scanning for StarryNet devices (8s)...")
     devices = await MyvuClient.scan()
@@ -134,6 +140,18 @@ commands:
       Push this PC's wall-clock time and UTC offset to the glasses so their
       clock matches (action 'SyncOffSetTime', same as the official app). This
       runs automatically on connect; use it to re-sync manually.
+
+  system settings (mirror the official app's ControlUtils):
+    lang <language> <country>   set UI/voice language, e.g. lang en US
+    name <text>                 rename the glasses
+    screenoff <seconds>         display auto-off timeout, e.g. screenoff 30
+    zen [on|off]                do-not-disturb (default on)
+    air [on|off]                minimal mode -- CLOSES ALL APPS and may
+                                restrict functions (default on)
+    wear [on|off]               auto on/off when worn (default on)
+    musictp [on|off]            music touch-panel control mode (default on)
+      For any of these, run 'query get_<name>' to read the current value
+      (e.g. query get_zen_mode) -- the reply shows up in the log.
 
   help            show this help
   quit / q        disconnect and exit
@@ -272,6 +290,30 @@ async def repl(client) -> None:
                     await client.query(arg)
             elif cmd == "synctime":
                 await client.sync_time()
+            elif cmd == "lang":
+                parts = arg.split()
+                if len(parts) != 2:
+                    print("usage: lang <language> <country>, e.g. lang en US")
+                else:
+                    await client.set_language(parts[0], parts[1])
+            elif cmd == "name":
+                if not arg:
+                    print("usage: name <new device name>")
+                else:
+                    await client.set_device_name(arg)
+            elif cmd == "screenoff":
+                if not arg.isdigit():
+                    print("usage: screenoff <seconds>, e.g. screenoff 30")
+                else:
+                    await client.set_screen_off_time(int(arg))
+            elif cmd == "zen":
+                await client.set_zen_mode(_onoff(arg))
+            elif cmd == "air":
+                await client.set_air_mode(_onoff(arg))
+            elif cmd == "wear":
+                await client.set_wear_detection(_onoff(arg))
+            elif cmd == "musictp":
+                await client.set_music_tp_control(_onoff(arg))
             elif cmd == "raw":
                 await client.send_action(arg)
             elif cmd == "ask":
@@ -311,6 +353,8 @@ async def do_run(address: str, own_mac: str, bt_status: int,
         await client.send_init_burst()
         await asyncio.sleep(1.5)
         await client.sync_time()  # match the glasses' clock to this PC on connect
+        await client.set_wear_detection(True)  # default wear detection on (app default)
+        await client.set_zen_mode(False)       # default do-not-disturb off
         await repl(client)
     finally:
         await client.close()
