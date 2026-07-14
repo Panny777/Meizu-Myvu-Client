@@ -365,6 +365,7 @@ async def do_run(address: str, own_mac: str, bt_status: int,
         await client.sync_time()  # match the glasses' clock to this PC on connect
         await client.set_wear_detection(True)  # default wear detection on (app default)
         await client.set_zen_mode(False)       # default do-not-disturb off
+        await client.set_screen_off_time(10)   # default display auto-off to 10s
         await repl(client)
     finally:
         await client.close()

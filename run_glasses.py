@@ -82,6 +82,7 @@ async def do_run(address: str, own_mac: str, uuid_wait: float, use_hfp: bool) ->
         await rf.sync_time()  # match the glasses' clock to this PC on connect
         await rf.set_wear_detection(True)  # default wear detection on (app default)
         await rf.set_zen_mode(False)       # default do-not-disturb off
+        await rf.set_screen_off_time(10)   # default display auto-off to 10s
         await repl(rf)
     finally:
         if hfp:
