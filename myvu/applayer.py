@@ -464,7 +464,7 @@ class AppLayerMixin:
 
     async def ai_send_recognized(self, session_id: str, text: str,
                                  stream: bool = True,
-                                 word_delay: float = 0.35) -> None:
+                                 word_delay: float = 0.2) -> None:
         """VAD start -> streaming ASR partials -> final -> VAD end.
 
         The real glasses render ASR as a *growing* caption: a series of code:101

@@ -420,10 +420,6 @@ async def repl(client) -> None:
                 if _is_stop_phrase(text):
                     print("[AI] stop phrase heard — conversation ended.")
                     break
-                # We've moved from listening -> processing: tell the glasses so
-                # their ~8s listening timeout doesn't auto-close the AI page
-                # mid-answer (VrState.VR_PROCESSION).
-                await client.ai_sync_vr_state(client.VR_PROCESSION)
                 # Run the answer pipeline in PARALLEL with streaming the caption:
                 # fire the Claude request the instant we have the transcription,
                 # stream the recognized-text caption concurrently, then start
@@ -438,7 +434,13 @@ async def repl(client) -> None:
                 # run_in_executor returns a Future that's already running -- await
                 # it directly (don't wrap in create_task, which wants a coroutine)
                 synth_fut = loop.run_in_executor(None, voice.synthesize, ans)
-                await caption_task          # caption fully shown
+                await caption_task          # caption fully shown FIRST
+                # Only NOW tell the glasses we've moved from listening ->
+                # processing (VrState.VR_PROCESSION). This must come AFTER the
+                # ASR caption -- sending it first makes the glasses drop the
+                # code:101 caption frames. It stops their ~8s listening timeout
+                # from auto-closing the AI page during the (longer) TTS playback.
+                await client.ai_sync_vr_state(client.VR_PROCESSION)
                 prepared = await synth_fut  # TTS audio ready (synthesized in parallel)
 
                 async def _play_prepared(_answer):
