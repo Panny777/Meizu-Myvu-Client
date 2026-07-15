@@ -141,16 +141,25 @@ commands:
       clock matches (action 'SyncOffSetTime', same as the official app). This
       runs automatically on connect; use it to re-sync manually.
 
-  nav start [road] | demo | stop | info <icon> <dist> [road] | open
+  nav route <from> -> <to> | start | demo | stop | info ... | open
       Drive the glasses' AR navigation HUD (the glasses render it from
       structured data we stream). This is the phone-initiated 'start
       navigation on glasses' path -- start_nav opens the HUD *with* initial
       data (an open_app whose ext carries the first nav frame), then we
       stream navi_info updates.
-        nav start [road] -- open the HUD and start navigation
-        nav demo   -- start the HUD then stream a SIMULATED route (arrow +
-                      road + distance counting down). Phase 1: no GPS/routing
-                      engine, just canned data, to prove the HUD renders.
+        nav live <dest> [@COMx] -- LIVE turn-by-turn from a serial NMEA GPS:
+                      routes current position -> <dest>, map-matches each GPS
+                      fix onto the route, streams updates, and reroutes when
+                      you go off-route. GPS port defaults to $MYVU_GPS_PORT or
+                      COM3 (override inline with @COM5). Example:
+                      nav live Bagamoyo @COM5
+        nav route <from> -> <to> -- REAL route but position SIMULATED (no GPS):
+                      geocode + OSRM route, drive the HUD along it. <from>/<to>
+                      are place names or lat,lon. Example:
+                      nav route Dar es Salaam -> Bagamoyo
+        nav demo   -- start the HUD then stream a SIMULATED canned route (to
+                      prove the HUD renders without any network/routing)
+        nav start [road] -- just open the HUD and start navigation
         nav stop   -- end navigation
         nav info <icon> <dist_to_turn_m> [road]  -- send one manual frame
                       (icon = maneuver type; exact meanings are firmware-
@@ -255,6 +264,125 @@ async def repl(client) -> None:
         except Exception as e:  # noqa: BLE001
             print(f"[nav] demo error: {e}")
         finally:
+            navstate["task"] = None
+
+    async def _nav_route(origin_s: str, dest_s: str, speedup: float = 6.0):
+        """Fetch an OSRM route origin->dest and drive the HUD along it. origin/
+        dest are 'lat,lon' or place names. `speedup` compresses real drive time
+        so a long route is watchable. No GPS -- position is simulated along the
+        route at each step's own average speed."""
+        from myvu import navigation
+        try:
+            print("[nav] geocoding + routing (OSRM)...")
+            origin = await loop.run_in_executor(None, navigation.parse_point, origin_s)
+            dest = await loop.run_in_executor(None, navigation.parse_point, dest_s)
+            route = await loop.run_in_executor(None, navigation.route, origin, dest)
+            total = route.total_distance
+            print(f"[nav] route: {len(route.steps)} steps, {total/1000:.1f} km, "
+                  f"~{route.total_duration/60:.0f} min")
+            steps = route.steps
+            travelled = 0
+            first = steps[0] if steps else None
+            await client.start_nav(
+                icon_type=steps[1].ic if len(steps) > 1 else 15,
+                path_distance=total, path_retain_distance=total,
+                next_road_name=(steps[1].road if len(steps) > 1 else "Arrive"),
+                next_road_distance=first.distance if first else 0, navi_speed="0")
+            await asyncio.sleep(2.0)
+            for i, step in enumerate(steps):
+                nxt = steps[i + 1] if i + 1 < len(steps) else None
+                ic = nxt.ic if nxt else 15            # 15 = arrive (provisional)
+                road = (nxt.road if nxt and nxt.road else step.road) or "Continue"
+                # metres/sec for this leg (fallback ~12 m/s), sped up
+                mps = (step.distance / step.duration if step.duration > 0 else 12.0)
+                mps = max(mps, 3.0) * speedup
+                remaining = step.distance
+                while remaining > 0:
+                    prd = total - travelled
+                    prt = int((route.total_duration) * (prd / total)) if total else 0
+                    await client.send_navi_info(
+                        icon_type=ic, path_distance=total, path_retain_distance=prd,
+                        path_remain_time=prt, next_road_name=road,
+                        next_road_distance=int(remaining),
+                        navi_speed=str(int(mps / speedup * 3.6)), gps_status=1)
+                    move = min(remaining, mps)
+                    remaining -= move
+                    travelled += move
+                    await asyncio.sleep(1.0)
+            print("[nav] arrived — route finished")
+            await client.nav_stop()
+        except asyncio.CancelledError:
+            await client.nav_stop()
+            raise
+        except Exception as e:  # noqa: BLE001
+            print(f"[nav] route error: {e}")
+        finally:
+            navstate["task"] = None
+
+    async def _nav_live(dest_s: str, port: str, baud: int):
+        """LIVE turn-by-turn: read a serial NMEA GPS, route current->dest with
+        OSRM, then map-match each GPS fix onto the route and stream navi_info.
+        Reroutes when the driver goes off-route. Ends on arrival / nav stop."""
+        from myvu import navigation, gps
+        src = gps.SerialNmeaGps(port, baud)
+        try:
+            await loop.run_in_executor(None, src.open)
+            print(f"[nav] waiting for a GPS fix on {port}...")
+            fix = await loop.run_in_executor(None, src.wait_for_fix, 60.0)
+            if fix is None:
+                print("[nav] no GPS fix (check the dongle / antenna / COM port)")
+                return
+            dest = await loop.run_in_executor(None, navigation.parse_point, dest_s)
+            route = await loop.run_in_executor(
+                None, navigation.route, (fix.lat, fix.lon), dest)
+            tracker = navigation.RouteTracker(route)
+            print(f"[nav] LIVE: {route.total_distance/1000:.1f} km, "
+                  f"~{route.total_duration/60:.0f} min — driving")
+            first = route.steps[1] if len(route.steps) > 1 else None
+            await client.start_nav(
+                icon_type=first.ic if first else 15, path_distance=route.total_distance,
+                path_retain_distance=route.total_distance,
+                next_road_name=first.road if first else "Arrive",
+                next_road_distance=int(first.at) if first else 0, navi_speed="0")
+            off_count = 0
+            while True:
+                await asyncio.sleep(1.0)
+                fix = src.latest()
+                if fix is None or not fix.valid:
+                    continue
+                st = tracker.update(fix.lat, fix.lon)
+                if st.off_route:
+                    off_count += 1
+                    if off_count >= 3:  # ~3s off-route -> reroute
+                        print(f"[nav] off-route ({st.deviation:.0f} m) — rerouting")
+                        route = await loop.run_in_executor(
+                            None, navigation.route, (fix.lat, fix.lon), dest)
+                        tracker = navigation.RouteTracker(route)
+                        off_count = 0
+                    continue
+                off_count = 0
+                if st.remaining < 25:
+                    print("[nav] arrived")
+                    break
+                nxt = st.next_step
+                prt = (int(st.remaining / fix.speed_mps) if fix.speed_mps > 1
+                       else int(route.total_duration * st.remaining
+                                / max(1, route.total_distance)))
+                await client.send_navi_info(
+                    icon_type=nxt.ic if nxt else 15,
+                    path_distance=route.total_distance,
+                    path_retain_distance=int(st.remaining), path_remain_time=prt,
+                    next_road_name=(nxt.road if nxt and nxt.road else "Continue"),
+                    next_road_distance=int(st.dist_to_next),
+                    navi_speed=str(int(fix.speed_mps * 3.6)), gps_status=1)
+            await client.nav_stop()
+        except asyncio.CancelledError:
+            await client.nav_stop()
+            raise
+        except Exception as e:  # noqa: BLE001
+            print(f"[nav] live error: {e}")
+        finally:
+            await loop.run_in_executor(None, src.close)
             navstate["task"] = None
 
     async def _ai_button_down():
@@ -389,6 +517,33 @@ async def repl(client) -> None:
                         navstate["task"] = asyncio.create_task(_nav_demo())
                         print("[nav] streaming a simulated route — watch the lens "
                               "(nav stop to end)")
+                elif sub == "route":
+                    if navstate["task"] is not None:
+                        print("[nav] a route is already running (nav stop to end)")
+                    elif "->" not in rest:
+                        print("usage: nav route <from> -> <to>   (place names or "
+                              "lat,lon), e.g. nav route Dar es Salaam -> Bagamoyo")
+                    else:
+                        frm, _, to = rest.partition("->")
+                        navstate["task"] = asyncio.create_task(
+                            _nav_route(frm.strip(), to.strip()))
+                        print("[nav] routing (OSRM) and driving the HUD — watch the "
+                              "lens (nav stop to end)")
+                elif sub == "live":
+                    if navstate["task"] is not None:
+                        print("[nav] a route is already running (nav stop to end)")
+                    elif not rest.strip():
+                        print("usage: nav live <destination> [@COMx]   "
+                              "(GPS port defaults to $MYVU_GPS_PORT or COM3)")
+                    else:
+                        dest_s, _, port_ovr = rest.partition("@")
+                        port = (port_ovr.strip() or
+                                os.environ.get("MYVU_GPS_PORT", "COM3"))
+                        baud = int(os.environ.get("MYVU_GPS_BAUD", "9600"))
+                        navstate["task"] = asyncio.create_task(
+                            _nav_live(dest_s.strip(), port, baud))
+                        print(f"[nav] LIVE navigation via GPS on {port} — watch the "
+                              "lens (nav stop to end)")
                 elif sub == "stop":
                     t = navstate["task"]
                     if t is not None:
@@ -408,8 +563,8 @@ async def repl(client) -> None:
                             path_retain_distance=int(parts[1]))
                         print("[nav] sent one navi_info frame")
                 else:
-                    print("usage: nav start [road] | demo | stop | "
-                          "info <icon> <dist> [road] | open")
+                    print("usage: nav live <dest> [@COMx] | route <from> -> <to> "
+                          "| start | demo | stop | info <icon> <dist> [road] | open")
             elif cmd == "lang":
                 parts = arg.split()
                 if len(parts) != 2:
