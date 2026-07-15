@@ -210,9 +210,6 @@ async def repl(client) -> None:
         t = text.strip().lower().rstrip(".!?,")
         return t in STOP_PHRASES
 
-    async def _speak(answer_text):
-        return await loop.run_in_executor(None, voice.speak, answer_text)
-
     # --- simulated navigation route (Phase 1: prove the glasses render the AR
     # nav overlay from our client, no GPS/routing engine needed) --------------
     navstate = {"task": None}
@@ -423,10 +420,27 @@ async def repl(client) -> None:
                 if _is_stop_phrase(text):
                     print("[AI] stop phrase heard — conversation ended.")
                     break
-                await client.ai_send_recognized(sid, text)  # caption of your words
-                ans = await client._generate_ai_answer(text)
+                # Run the answer pipeline in PARALLEL with streaming the caption:
+                # fire the Claude request the instant we have the transcription,
+                # stream the recognized-text caption concurrently, then start
+                # Groq TTS synthesis as soon as the answer lands (overlapping any
+                # remaining caption). Playback still comes after the caption so
+                # the question is shown before the answer is spoken.
+                answer_task = asyncio.create_task(client._generate_ai_answer(text))
+                caption_task = asyncio.create_task(
+                    client.ai_send_recognized(sid, text))
+                ans = await answer_task
                 print(f"AI: {ans}")
-                await client.ai_send_answer(ans, speak=_speak)  # SPEAK over A2DP
+                # run_in_executor returns a Future that's already running -- await
+                # it directly (don't wrap in create_task, which wants a coroutine)
+                synth_fut = loop.run_in_executor(None, voice.synthesize, ans)
+                await caption_task          # caption fully shown
+                prepared = await synth_fut  # TTS audio ready (synthesized in parallel)
+
+                async def _play_prepared(_answer):
+                    return await loop.run_in_executor(None, voice.play, prepared)
+
+                await client.ai_send_answer(ans, speak=_play_prepared)  # SPEAK A2DP
                 turn += 1
         except Exception as e:  # noqa: BLE001
             print(f"[AI] error: {e}")

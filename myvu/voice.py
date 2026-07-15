@@ -153,26 +153,26 @@ def _sapi_tts(text: str):
     return audio, sr
 
 
-def speak(text: str) -> bool:
-    """Synthesize `text` and play it out the MYVU glasses' A2DP speaker, so the
-    assistant answer is SPOKEN like the real thing. Uses Groq's natural voice
-    (Orpheus) when GROQ_API_KEY is set, otherwise Windows SAPI. Blocking -- call
-    via run_in_executor. Returns False if the speaker or TTS isn't available."""
+def synthesize(text: str):
+    """Produce ready-to-play audio for `text` on the MYVU A2DP speaker, without
+    playing it. Returns (audio, device_index, sample_rate) or None. Blocking
+    (Groq/SAPI TTS + resample) -- call via run_in_executor so it can run in
+    parallel with other work (e.g. streaming the ASR caption). Split out from
+    speak() so synthesis and playback can overlap other steps."""
     import numpy as np
-    import sounddevice as sd
 
     if not text:
-        return False
+        return None
     spk = find_myvu_speaker()
     if spk is None:
         log.warning("MYVU speaker not found -- glasses connected as a Windows "
                     "audio device?")
-        return False
+        return None
     dev, dev_sr, dev_ch = spk
 
     result = _groq_tts(text) or _sapi_tts(text)
     if result is None:
-        return False
+        return None
     audio, sr = result
 
     if sr != dev_sr:
@@ -185,10 +185,29 @@ def speak(text: str) -> bool:
                               dev_sr // g, sr // g).astype(np.int16)
     if dev_ch >= 2:  # duplicate mono -> stereo for the A2DP device
         audio = np.column_stack([audio, audio])
+    return audio, dev, dev_sr
+
+
+def play(prepared) -> bool:
+    """Play audio produced by synthesize() -- (audio, device, sample_rate).
+    Blocking -- call via run_in_executor. Returns False if there's nothing to
+    play."""
+    import sounddevice as sd
+    if not prepared:
+        return False
+    audio, dev, dev_sr = prepared
     log.info("speaking answer over MYVU A2DP (device %d @ %dHz)", dev, dev_sr)
     sd.play(audio, samplerate=dev_sr, device=dev)
     sd.wait()
     return True
+
+
+def speak(text: str) -> bool:
+    """Synthesize `text` and play it out the MYVU glasses' A2DP speaker, so the
+    assistant answer is SPOKEN like the real thing. Uses Groq's natural voice
+    (Orpheus) when GROQ_API_KEY is set, otherwise Windows SAPI. Blocking -- call
+    via run_in_executor. Returns False if the speaker or TTS isn't available."""
+    return play(synthesize(text))
 
 
 def record_until_silence(max_seconds: float = 12.0, silence_dur: float = 1.5,
