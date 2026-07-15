@@ -524,6 +524,15 @@ class AppLayerMixin:
             await asyncio.sleep(0.3)
             await self.push_notification("AI", answer, app_name="AI")
 
+    async def ai_stop_listening(self) -> None:
+        """Tell the glasses to close the voice-recognition session and leave the
+        AI listening page: code:106 (CODE_SYNC_VR_STATE) with payload
+        VrState.CLOSE (0) -- matching VrStateSynchronizer.syncStateToStarGlass
+        in the app. Send this when we end a conversation from our side (stop
+        phrase, silence, no speech) so the glasses stop listening too instead of
+        sitting on the AI page waiting for more speech."""
+        await self._ai_send_code(106, 0)  # VrState.CLOSE
+
     # ----------------------------------------------------------- mic capture
     async def capture_mic(self, seconds: float = 6.0,
                           out_path: str = "mic_capture.bin") -> dict:

@@ -445,6 +445,11 @@ async def repl(client) -> None:
         except Exception as e:  # noqa: BLE001
             print(f"[AI] error: {e}")
         finally:
+            # tell the glasses to close the AI page / stop listening too
+            try:
+                await client.ai_stop_listening()
+            except Exception:  # noqa: BLE001
+                pass
             vstate["active"] = False
             vstate["stop"] = False
 
