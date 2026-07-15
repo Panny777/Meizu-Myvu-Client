@@ -9,3 +9,5 @@ sounddevice>=0.5.0
 scipy>=1.11.0
 numpy>=1.24.0
 openai>=1.30.0  # used against Groq's OpenAI-compatible endpoint (needs GROQ_API_KEY)
+# live navigation (myvu/gps.py): serial NMEA GPS receiver for `nav live`
+pyserial>=3.5
