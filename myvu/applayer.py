@@ -93,9 +93,19 @@ class AppLayerMixin:
             m = relay.parse_frame(content)
             if m is None or m.msg_type != tlv.MSG_SEND:
                 continue  # skip non-data (e.g. the one captured ACK)
+            body_text = m.msg_body.decode("utf-8", "replace")
+            # Skip captured messages that replay STALE state. The capture's
+            # SyncOffSetTime carries an old wall-clock time (it sets the glasses'
+            # clock backwards) and sync_clone_data carries the old settings
+            # snapshot (wear detection off, screen-off 30, ...) -- both fight our
+            # live sync_time() / set_*() defaults. The burst only needs a clean
+            # msgId sequence to wake the relay dispatcher; these specific
+            # payloads aren't required.
+            if "SyncOffSetTime" in body_text or "sync_clone_data" in body_text:
+                log.debug("   skip stale init msg (f%s): %s", frame, body_text[:70])
+                continue
             mid = await self.send_relay_data(
                 m.msg_body, m.need_callback, m.category, m.app_unite_code)
-            body_text = m.msg_body.decode("utf-8", "replace")
             log.debug("   -> msgId=%d (f%s, %dB) %s", mid, frame, len(m.msg_body), body_text)
             sent += 1
             await asyncio.sleep(delay)
