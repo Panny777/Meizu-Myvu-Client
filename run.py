@@ -476,8 +476,17 @@ async def repl(client) -> None:
     print(HELP)
     while True:
         if not client.is_connected:
-            print("!! link is down, exiting REPL")
-            return
+            # The link dropped. A reconnect supervisor (run_glasses relay) may
+            # bring it back, so wait out a grace period before giving up rather
+            # than exiting on a transient drop.
+            for _ in range(12):
+                await asyncio.sleep(1.0)
+                if client.is_connected:
+                    break
+            if not client.is_connected:
+                print("!! link is down, exiting REPL")
+                return
+            print("link back up.")
         try:
             line = (await loop.run_in_executor(None, input, "myvu> ")).strip()
         except (EOFError, KeyboardInterrupt):

@@ -41,14 +41,47 @@ class MyvuRfcommClient(AppLayerMixin):
         self.own_mac = own_mac
         self.own_id = linkproto.mac_str_to_bytes(own_mac)
         self.device_name = device_name
-        if service_uuid:
-            from . import rfcomm_winrt
-            self.transport = rfcomm_winrt.WinRtRfcommTransport(address, service_uuid)
-        else:
-            self.transport = rfcomm.RfcommTransport(address, channel)
+        self.service_uuid = service_uuid
+        self.channel = channel
+        self._make_transport()
         self.seq = relay.RelaySequencer()
         self.peer_info: dict = {}
         self._drain_task = None
+
+    def _make_transport(self) -> None:
+        if self.service_uuid:
+            from . import rfcomm_winrt
+            self.transport = rfcomm_winrt.WinRtRfcommTransport(
+                self.address, self.service_uuid)
+        else:
+            self.transport = rfcomm.RfcommTransport(self.address, self.channel)
+
+    async def reconnect(self, new_service_uuid: str | None = None) -> None:
+        """Tear down the current relay transport and re-establish it IN PLACE
+        (same client object, so REPL/callback references stay valid). Used when
+        the glasses drop the relay or ask us to (re)connect it (cmd=71). Reuses
+        the cached per-session UUID unless a fresh one is given, resets the relay
+        sequence (a new relay connection starts from msgId 1), and replays the
+        init burst."""
+        if new_service_uuid:
+            self.service_uuid = new_service_uuid
+        if self._drain_task:
+            self._drain_task.cancel()
+            self._drain_task = None
+        try:
+            result = self.transport.close()
+            if asyncio.iscoroutine(result):
+                await result
+        except Exception:  # noqa: BLE001
+            pass
+        self._make_transport()
+        self.seq = relay.RelaySequencer()  # fresh sequence for the new session
+        await self.transport.connect()
+        log.info("RFCOMM reconnected to %s channel %s",
+                 self.address, self.transport.channel)
+        await self.establish_session()
+        self.start_drains()
+        await self.send_init_burst()
 
     async def connect(self) -> None:
         await self.transport.connect()

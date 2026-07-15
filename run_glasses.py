@@ -78,12 +78,58 @@ async def do_run(address: str, own_mac: str, uuid_wait: float, use_hfp: bool) ->
                 "Hands-Free connection from pairing the glasses as an AUDIO "
                 "device. This is the stable path -- see README.")
 
+        async def apply_defaults():
+            """Live connect-time state we push to the glasses. Re-applied after a
+            relay reconnect too, since the init burst no longer carries these."""
+            await rf.sync_time()               # match the glasses' clock to this PC
+            await rf.set_wear_detection(True)  # wear detection on (app default)
+            await rf.set_zen_mode(False)       # do-not-disturb off
+            await rf.set_screen_off_time(10)   # display auto-off to 10s
+
         await asyncio.sleep(1.0)
-        await rf.sync_time()  # match the glasses' clock to this PC on connect
-        await rf.set_wear_detection(True)  # default wear detection on (app default)
-        await rf.set_zen_mode(False)       # default do-not-disturb off
-        await rf.set_screen_off_time(10)   # default display auto-off to 10s
-        await repl(rf)
+        await apply_defaults()
+
+        # --- relay resilience --------------------------------------------------
+        # The glasses manage the app-relay lifecycle: they drop it when idle and
+        # re-request it via cmd=71 (SPP_SERVER_REQUEST_CONNECT). Reconnect the
+        # relay in place (same rf object) when it drops or when they ask, so the
+        # REPL survives relay churn instead of the session ending.
+        relay_wake = asyncio.Event()
+
+        async def _on_spp_connect_request():
+            relay_wake.set()
+
+        ble._spp_connect_callback = _on_spp_connect_request
+
+        async def relay_supervisor():
+            log_ = logging.getLogger("myvu")
+            while True:
+                try:
+                    await asyncio.wait_for(relay_wake.wait(), timeout=3.0)
+                except asyncio.TimeoutError:
+                    pass
+                relay_wake.clear()
+                if rf.is_connected:
+                    continue
+                for attempt in range(1, 7):
+                    uid = ble.spp_uuid or rf.service_uuid
+                    try:
+                        log_.warning("app-relay down -- reconnecting "
+                                     "(attempt %d, uuid=%s)", attempt, uid)
+                        await rf.reconnect(uid)
+                        rf._sibling = ble
+                        await apply_defaults()  # re-push our live state
+                        log_.info("app-relay reconnected")
+                        break
+                    except Exception as e:  # noqa: BLE001
+                        log_.warning("relay reconnect failed: %s", e)
+                        await asyncio.sleep(3.0)
+
+        supervisor = asyncio.create_task(relay_supervisor())
+        try:
+            await repl(rf)
+        finally:
+            supervisor.cancel()
     finally:
         if hfp:
             await hfp.close()

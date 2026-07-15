@@ -62,6 +62,7 @@ class MyvuClient(AppLayerMixin):
         self.peer_info: dict = {}
         self.seq = relay.RelaySequencer()   # RunAsOne relay msgId sequencing
         self.spp_uuid: Optional[str] = None  # set once CMD_SPP_SERVER_UUID_SYNC arrives
+        self._spp_connect_callback = None    # fired on cmd=71 (glasses want relay)
 
     # ----------------------------------------------------------- discovery
     @staticmethod
@@ -313,10 +314,17 @@ class MyvuClient(AppLayerMixin):
                 if msg.cmd == linkproto.CMD_SPP_SERVER_UUID_SYNC:
                     self.spp_uuid = linkproto.spp_short_uuid_to_str(msg.data)
                     log.info("<- SPP_SERVER_UUID_SYNC: uuid=%s", self.spp_uuid)
-                elif msg.cmd in (linkproto.CMD_SPP_SERVER_REQUEST_CONNECT,
-                                 linkproto.CMD_SPP_SERVER_REQUEST_STATE_OPEN,
+                elif msg.cmd == linkproto.CMD_SPP_SERVER_REQUEST_CONNECT:
+                    # glasses ask the phone to (re)connect the app-relay channel
+                    # (SPPNegotiateProtocolManager.handleServerRequestConnect)
+                    log.info("<- SPP_SERVER_REQUEST_CONNECT (glasses want the "
+                             "relay connected)")
+                    cb = getattr(self, "_spp_connect_callback", None)
+                    if cb is not None:
+                        asyncio.create_task(cb())
+                elif msg.cmd in (linkproto.CMD_SPP_SERVER_REQUEST_STATE_OPEN,
                                  linkproto.CMD_SPP_SERVER_REQUEST_STATE_CLOSE):
-                    log.info("<- LinkProtocol cmd=%d (SPP request, data=%s)",
+                    log.info("<- LinkProtocol cmd=%d (SPP state change, data=%s)",
                              msg.cmd, msg.data)
                 elif msg.cmd not in (0,):
                     log.debug("DEV/internal <- LinkProtocol cmd=%d data=%r",
