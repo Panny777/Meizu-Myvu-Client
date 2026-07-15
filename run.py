@@ -384,10 +384,10 @@ async def repl(client) -> None:
 
     async def _ai_button_down():
         if vstate["active"]:
-            # a second press during a conversation -> stop now (this also
-            # aborts an in-progress recording via the should_stop poll below)
-            vstate["stop"] = True
-            print("[AI] stopping...")
+            # Already in a turn. This is almost always the SAME button press
+            # echoed on both the BLE and classic-BT relay channels (we listen on
+            # both), so just ignore it -- do NOT treat it as a stop. Leaving the
+            # AI page comes through as control:0 -> _ai_page_closed instead.
             return
         vstate["active"] = True
         vstate["stop"] = False
