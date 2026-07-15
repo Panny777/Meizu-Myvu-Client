@@ -50,7 +50,9 @@ class MyvuClient(AppLayerMixin):
         self.ble: Optional[BleakClient] = None
         self.internal_uuid: Optional[str] = None
         self.external_uuid: Optional[str] = None
+        self.urgent_uuid: Optional[str] = None   # heartbeat characteristic
         self.channels: Dict[str, chan.MessageChannel] = {}
+        self._heartbeat_task: Optional[asyncio.Task] = None
 
         # crypto session state
         self.keypair: Optional[crypto.KeyPair] = None
@@ -140,6 +142,12 @@ class MyvuClient(AppLayerMixin):
         for internal, external in uuids.CHANNEL_PAIRS:
             if internal.lower() in have and external.lower() in have:
                 self.internal_uuid, self.external_uuid = internal, external
+                # The heartbeat/urgent characteristic is the same family (+2
+                # from internal): AIR 0x2022, V2 0x2012. Only use it if present.
+                urgent = (uuids.AIR_URGENT_UUID
+                          if internal == uuids.AIR_INTERNAL_UUID
+                          else uuids.V2_URGENT_UUID)
+                self.urgent_uuid = urgent if urgent.lower() in have else None
                 return
         raise RuntimeError(
             "no known StarryNet channel pair found on device; characteristics="
@@ -318,6 +326,37 @@ class MyvuClient(AppLayerMixin):
             asyncio.create_task(drain_external()),
             asyncio.create_task(drain_internal()),
         ]
+        self.start_heartbeat()
+
+    # BleRequestDispatcher in the app writes this every 3s to the urgent
+    # characteristic; without it the glasses' watchdog drops the BLE link
+    # ("disconnected by peer"). Bytes and interval taken verbatim from
+    # BleRequestDispatcher.HEART_BEAT_DATA / HEART_BEAT_INTERVAL.
+    _HEARTBEAT_DATA = bytes([0, 0, 9, 16, 0])
+    _HEARTBEAT_INTERVAL = 3.0
+
+    def start_heartbeat(self) -> None:
+        """Periodically write the keep-alive to the urgent characteristic so the
+        glasses don't drop the link. No-op if the char isn't present or it's
+        already running."""
+        if self.urgent_uuid is None or self._heartbeat_task is not None:
+            return
+
+        async def _loop():
+            while True:
+                await asyncio.sleep(self._HEARTBEAT_INTERVAL)
+                if not (self.ble and self.ble.is_connected):
+                    return
+                try:
+                    await self.ble.write_gatt_char(
+                        self.urgent_uuid, self._HEARTBEAT_DATA, response=False)
+                except Exception as e:  # noqa: BLE001
+                    log.debug("heartbeat write failed: %s", e)
+                    return
+
+        self._heartbeat_task = asyncio.create_task(_loop())
+        log.debug("BLE heartbeat started (every %.0fs -> %s)",
+                  self._HEARTBEAT_INTERVAL, self.urgent_uuid)
 
     async def listen_external(self) -> None:
         """Keep the session alive and print a heartbeat so you can tell
@@ -340,5 +379,8 @@ class MyvuClient(AppLayerMixin):
         return bool(self.ble and self.ble.is_connected)
 
     async def close(self) -> None:
+        if self._heartbeat_task is not None:
+            self._heartbeat_task.cancel()
+            self._heartbeat_task = None
         if self.ble and self.ble.is_connected:
             await self.ble.disconnect()
