@@ -337,12 +337,17 @@ class MyvuClient(AppLayerMixin):
 
     def start_heartbeat(self) -> None:
         """Periodically write the keep-alive to the urgent characteristic so the
-        glasses don't drop the link. No-op if the char isn't present or it's
-        already running."""
-        if self.urgent_uuid is None or self._heartbeat_task is not None:
+        glasses don't drop the link. No-op if it's already running."""
+        if self._heartbeat_task is not None:
+            return
+        if self.urgent_uuid is None:
+            log.warning("BLE heartbeat NOT started: urgent characteristic "
+                        "(0x2022) not found on this device -- the glasses may "
+                        "drop the link on their watchdog timeout")
             return
 
         async def _loop():
+            n = 0
             while True:
                 await asyncio.sleep(self._HEARTBEAT_INTERVAL)
                 if not (self.ble and self.ble.is_connected):
@@ -351,12 +356,18 @@ class MyvuClient(AppLayerMixin):
                     await self.ble.write_gatt_char(
                         self.urgent_uuid, self._HEARTBEAT_DATA, response=False)
                 except Exception as e:  # noqa: BLE001
-                    log.debug("heartbeat write failed: %s", e)
+                    log.warning("BLE heartbeat write failed (%s) -- stopping "
+                                "heartbeat; link may now drop", e)
                     return
+                n += 1
+                if n == 1:
+                    log.info("BLE heartbeat active (every %.0fs -> %s)",
+                             self._HEARTBEAT_INTERVAL, self.urgent_uuid)
+                else:
+                    log.debug("BLE heartbeat #%d sent", n)
 
         self._heartbeat_task = asyncio.create_task(_loop())
-        log.debug("BLE heartbeat started (every %.0fs -> %s)",
-                  self._HEARTBEAT_INTERVAL, self.urgent_uuid)
+        log.info("BLE heartbeat starting (every %.0fs)", self._HEARTBEAT_INTERVAL)
 
     async def listen_external(self) -> None:
         """Keep the session alive and print a heartbeat so you can tell
