@@ -141,6 +141,22 @@ commands:
       clock matches (action 'SyncOffSetTime', same as the official app). This
       runs automatically on connect; use it to re-sync manually.
 
+  nav start [road] | demo | stop | info <icon> <dist> [road] | open
+      Drive the glasses' AR navigation HUD (the glasses render it from
+      structured data we stream). This is the phone-initiated 'start
+      navigation on glasses' path -- start_nav opens the HUD *with* initial
+      data (an open_app whose ext carries the first nav frame), then we
+      stream navi_info updates.
+        nav start [road] -- open the HUD and start navigation
+        nav demo   -- start the HUD then stream a SIMULATED route (arrow +
+                      road + distance counting down). Phase 1: no GPS/routing
+                      engine, just canned data, to prove the HUD renders.
+        nav stop   -- end navigation
+        nav info <icon> <dist_to_turn_m> [road]  -- send one manual frame
+                      (icon = maneuver type; exact meanings are firmware-
+                      defined, so experiment to see which arrow each shows)
+        nav open   -- just launch the nav app (no HUD data)
+
   system settings (mirror the official app's ControlUtils):
     lang <language> <country>   set UI/voice language, e.g. lang en US
     name <text>                 rename the glasses
@@ -187,6 +203,59 @@ async def repl(client) -> None:
 
     async def _speak(answer_text):
         return await loop.run_in_executor(None, voice.speak, answer_text)
+
+    # --- simulated navigation route (Phase 1: prove the glasses render the AR
+    # nav overlay from our client, no GPS/routing engine needed) --------------
+    navstate = {"task": None}
+
+    # (icon_type, road name, leg length in metres). icon_type is the glasses'
+    # maneuver icon; exact meanings are firmware-defined, so the demo cycles a
+    # few so you can see which arrow each renders.
+    _DEMO_ROUTE = [
+        (2, "Main Street", 300),
+        (3, "Elm Avenue", 500),
+        (1, "Highway 1", 1200),
+        (4, "Market Square", 250),
+        (2, "Finish", 0),
+    ]
+
+    async def _nav_demo():
+        total = sum(leg for _ic, _n, leg in _DEMO_ROUTE)
+        travelled = 0
+        speed_mps = 14  # ~50 km/h
+        try:
+            # open the HUD *with* initial nav data (this is what actually starts
+            # navigation on the glasses), then stream updates
+            first_ic, first_road, first_leg = _DEMO_ROUTE[0]
+            await client.start_nav(icon_type=first_ic, path_distance=total,
+                                   path_retain_distance=total,
+                                   next_road_name=first_road,
+                                   next_road_distance=first_leg,
+                                   navi_speed=str(int(speed_mps * 3.6)))
+            await asyncio.sleep(2.0)  # let the HUD open / navi_start_rsp
+            for ic, road, leg in _DEMO_ROUTE:
+                remaining_to_turn = leg
+                while remaining_to_turn > 0:
+                    prd = total - travelled            # remaining on route
+                    prt = int(prd / speed_mps)         # remaining seconds
+                    await client.send_navi_info(
+                        icon_type=ic, path_distance=total,
+                        path_retain_distance=prd, path_remain_time=prt,
+                        next_road_name=road, next_road_distance=remaining_to_turn,
+                        navi_speed=str(int(speed_mps * 3.6)), gps_status=1)
+                    step = min(100, remaining_to_turn)
+                    remaining_to_turn -= step
+                    travelled += step
+                    await asyncio.sleep(1.0)
+            print("[nav] demo route finished")
+            await client.nav_stop()
+        except asyncio.CancelledError:
+            await client.nav_stop()
+            raise
+        except Exception as e:  # noqa: BLE001
+            print(f"[nav] demo error: {e}")
+        finally:
+            navstate["task"] = None
 
     async def _ai_button_down():
         if vstate["active"]:
@@ -300,6 +369,47 @@ async def repl(client) -> None:
                     await client.query(arg)
             elif cmd == "synctime":
                 await client.sync_time()
+            elif cmd == "nav":
+                sub, _, rest = arg.partition(" ")
+                sub = sub.lower()
+                if sub == "open":
+                    await client.open_nav()
+                    print("[nav] opened navigation app on the glasses")
+                elif sub == "start":
+                    await client.start_nav(
+                        icon_type=1, path_distance=1000, path_retain_distance=1000,
+                        next_road_name=rest or "Ahead", next_road_distance=300,
+                        navi_speed="0")
+                    print("[nav] started navigation HUD on the glasses (then "
+                          "'nav info ...' to update, or use 'nav demo')")
+                elif sub == "demo":
+                    if navstate["task"] is not None:
+                        print("[nav] a route is already running (nav stop to end)")
+                    else:
+                        navstate["task"] = asyncio.create_task(_nav_demo())
+                        print("[nav] streaming a simulated route — watch the lens "
+                              "(nav stop to end)")
+                elif sub == "stop":
+                    t = navstate["task"]
+                    if t is not None:
+                        t.cancel()
+                    else:
+                        await client.nav_stop()
+                    print("[nav] stopped")
+                elif sub == "info":
+                    # nav info <icon> <dist_to_turn> <road name>
+                    parts = rest.split(maxsplit=2)
+                    if len(parts) < 2:
+                        print("usage: nav info <icon> <dist_to_turn_m> [road name]")
+                    else:
+                        await client.send_navi_info(
+                            icon_type=int(parts[0]), next_road_distance=int(parts[1]),
+                            next_road_name=parts[2] if len(parts) > 2 else "",
+                            path_retain_distance=int(parts[1]))
+                        print("[nav] sent one navi_info frame")
+                else:
+                    print("usage: nav start [road] | demo | stop | "
+                          "info <icon> <dist> [road] | open")
             elif cmd == "lang":
                 parts = arg.split()
                 if len(parts) != 2:

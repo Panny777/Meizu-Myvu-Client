@@ -241,6 +241,92 @@ class AppLayerMixin:
         await self._system_set("set_music_tp_control_mode",
                                {"music_tp_control_mode": on})
 
+    # ---------------------------------------------------------- navigation
+    # The glasses render the AR nav overlay themselves from structured data --
+    # we just launch the nav app and stream navi_info frames. Ported from
+    # com.upuphone.ar.navi.lite (NotifyUtils / ProtocolUtils). The nav app on
+    # the glasses is a separate package from the launcher.
+    NAV_APP_PKG = "com.upuphone.ar.navi.glass"    # receiver (glasses nav app)
+    NAV_PHONE_PKG = "com.upuphone.ar.navi.lite"   # sender (phone nav app)
+
+    async def open_nav(self, ext: str = "") -> None:
+        """Launch the glasses' AR navigation app. Mirrors NotifyUtils
+        .createBaseData: an open_app routed through the launcher."""
+        msg = {"action": "app", "data": {
+            "launchMode": "scene", "action": "open_app",
+            "pkg": self.NAV_APP_PKG, "show_status_bar": False,
+            "ext": ext, "app_name": "Navigation"}}
+        await self.send_action(json.dumps(msg, separators=(",", ":")),
+                               source_pkg=self.NAV_PHONE_PKG)
+
+    async def start_nav(self, icon_type: int = 1, path_distance: int = 0,
+                        path_retain_distance: int = 0, path_remain_time: int = 0,
+                        next_road_name: str = "", next_road_distance: int = 0,
+                        navi_speed: str = "0", ride_distance: int = 0,
+                        gps_status: int = 1, road_class: int = 0,
+                        navi_mode: int = 0, display_pos: int = 0,
+                        mask_msg: bool = False, brightness: bool = False,
+                        launch_mode: str = "scene") -> None:
+        """Open the AR nav HUD on the glasses AND start navigation -- this is
+        the phone-initiated 'start navigation on glasses' path (NaviFragment
+        .openAndStartGlass / T2), NOT opening the nav app on the glasses.
+
+        It's an open_app to the launcher whose `ext` carries the INITIAL pre-nav
+        data as a JSON string (ProtocolUtils.i: the navi_info fields plus
+        naviMode/displayPos/maskMsg/brightness, without the 'identity' wrapper).
+        The glasses open the HUD and reply 'navi_start_rsp'; after that, stream
+        send_navi_info() frames to keep the HUD updated."""
+        import time as _t
+        ext = {"naviMode": navi_mode, "displayPos": display_pos,
+               "maskMsg": 1 if mask_msg else 0,
+               "brightness": 1 if brightness else 0,
+               "ic": icon_type, "pd": path_distance, "prd": path_retain_distance,
+               "prt": path_remain_time, "nrn": next_road_name,
+               "nrd": next_road_distance, "ns": navi_speed, "rdd": ride_distance,
+               "gs": gps_status, "hsr": road_class, "ack": int(_t.time() * 1000)}
+        msg = {"action": "app", "data": {
+            "launchMode": launch_mode, "action": "open_app",
+            "pkg": self.NAV_APP_PKG, "show_status_bar": False,
+            "ext": json.dumps(ext, separators=(",", ":")),
+            "app_name": "Navigation"}}
+        await self.send_action(json.dumps(msg, separators=(",", ":")),
+                               source_pkg=self.NAV_PHONE_PKG)
+
+    async def send_navi_info(self, icon_type: int = 0, path_distance: int = 0,
+                             path_retain_distance: int = 0, path_remain_time: int = 0,
+                             next_road_name: str = "", next_road_distance: int = 0,
+                             navi_speed: str = "0", ride_distance: int = 0,
+                             gps_status: int = 1, road_class: int = 0,
+                             brightness: int = 0) -> None:
+        """Send one turn-by-turn frame the glasses render (ProtocolUtils
+        .createNaviInfoData / 'h'). Short keys are the app's own:
+        ic=maneuver icon type, pd/prd=total/remaining distance (m), prt=remaining
+        time (s), nrn/nrd=next road name / distance to next turn (m), ns=speed
+        text, gs=gps fix (1=ok), hsr=road class, bts=auto-brightness."""
+        import time as _t
+        info = {"identity": "navi_info", "ic": icon_type, "pd": path_distance,
+                "prd": path_retain_distance, "prt": path_remain_time,
+                "nrn": next_road_name, "nrd": next_road_distance, "ns": navi_speed,
+                "rdd": ride_distance, "gs": gps_status, "hsr": road_class,
+                "bts": brightness, "ack": int(_t.time() * 1000)}
+        await self.send_action(json.dumps(info, separators=(",", ":")),
+                               source_pkg=self.NAV_PHONE_PKG,
+                               target_pkg=self.NAV_APP_PKG)
+
+    async def nav_event(self, event: str, navi_mode: int = 0) -> None:
+        """Send a navi_event (ProtocolUtils.createNaviEventData / 'g'), e.g.
+        event='navi_stop' to end navigation on the glasses."""
+        import time as _t
+        msg = {"identity": "navi_event", "naviMode": navi_mode, "data": event,
+               "ack": int(_t.time() * 1000)}
+        await self.send_action(json.dumps(msg, separators=(",", ":")),
+                               source_pkg=self.NAV_PHONE_PKG,
+                               target_pkg=self.NAV_APP_PKG)
+
+    async def nav_stop(self) -> None:
+        """End navigation on the glasses."""
+        await self.nav_event("navi_stop")
+
     async def query(self, sub_action: str) -> None:
         """Send any no-argument 'system' query (e.g. get_device_info,
         get_language, get_zen_mode, get_air_mode, get_screen_off_time,
@@ -570,8 +656,45 @@ class AppLayerMixin:
                     log.debug("APP <- %s", o)
                     self._check_ai_trigger(o)
                     self._check_time_sync_request(o)
+                    self._check_launch_app_request(o)
         else:
             log.debug("APP <- (raw %d B) %s", len(payload), payload.hex())
+
+    # The RunAsOne inner channel (FunctionType messages) uses this package as
+    # both sender and receiver (StarryNetMessageFactory.createInnerMessage).
+    INTERCONNECT_PKG = "com.upuphone.xr.interconnect"
+
+    def _check_launch_app_request(self, json_str: str) -> None:
+        """Answer the glasses' RunAsOne 'open StarryNet app' request so companion
+        apps (navigation, etc.) start.
+
+        When you open e.g. the nav app on the glasses, they ask the phone to
+        launch a phone-side StarryNet app/service via
+        {"type":11,"data":{appId,code,menuId,requestId,success}}
+        (FunctionType.TYPE_OPEN_STARRY_NET_APP_REQUEST). On a real phone
+        LaunchRequestHandler starts the service and replies type:12 success;
+        without that ack the glasses' app never proceeds (e.g. it ignores our
+        navi_info and re-sends the request forever). We can't start an Android
+        service, but the glasses only need the success ack -- the actual data
+        (navi_info, ...) we stream ourselves -- so reply type:12 success (code
+        200), echoing appId/menuId/requestId, on the interconnect inner channel."""
+        try:
+            msg = json.loads(json_str)
+        except (json.JSONDecodeError, ValueError):
+            return
+        if msg.get("type") != 11:
+            return
+        data = msg.get("data") or {}
+        app_id = data.get("appId")
+        if not app_id:
+            return
+        log.info("glasses requested launch of %s -- acking (type:12 success)", app_id)
+        resp = {"type": 12, "data": {
+            "appId": app_id, "code": 200, "menuId": data.get("menuId", ""),
+            "requestId": data.get("requestId", ""), "success": True}}
+        asyncio.create_task(self.send_action(
+            json.dumps(resp, separators=(",", ":")),
+            source_pkg=self.INTERCONNECT_PKG, target_pkg=self.INTERCONNECT_PKG))
 
     def _check_time_sync_request(self, json_str: str) -> None:
         """The glasses ask for the wall-clock time by sending a launcher action
