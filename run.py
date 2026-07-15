@@ -420,6 +420,10 @@ async def repl(client) -> None:
                 if _is_stop_phrase(text):
                     print("[AI] stop phrase heard — conversation ended.")
                     break
+                # We've moved from listening -> processing: tell the glasses so
+                # their ~8s listening timeout doesn't auto-close the AI page
+                # mid-answer (VrState.VR_PROCESSION).
+                await client.ai_sync_vr_state(client.VR_PROCESSION)
                 # Run the answer pipeline in PARALLEL with streaming the caption:
                 # fire the Claude request the instant we have the transcription,
                 # stream the recognized-text caption concurrently, then start
@@ -454,17 +458,17 @@ async def repl(client) -> None:
             vstate["stop"] = False
 
     async def _ai_page_closed():
-        # The glasses closed the AI page (code:3/code:7 control:0 = CLOSE).
-        # Stop our conversation loop too -- otherwise we keep recording the mic
-        # and transcribing after the user has already exited the AI page.
+        # The glasses sent control:0 (WakeupControl.CLOSE) -- the user pressed
+        # the AI button again to leave the AI page. Stop our loop + abort any
+        # in-progress recording. NB: this is safe now only because we send
+        # VR_PROCESSION during processing, which stops the glasses' listening
+        # timeout from emitting a spurious close mid-answer.
         if vstate["active"] and not vstate["stop"]:
-            vstate["stop"] = True  # aborts the in-progress record via should_stop
-            print("[AI] glasses closed the AI page — stopping.")
+            vstate["stop"] = True
+            print("[AI] AI button pressed again — stopping.")
 
-    # Register on this client AND its sibling (the button press may arrive over
-    # either the classic-BT relay or the BLE channel; run_glasses.py sets
-    # rf._sibling = ble). The release/close handler stops the loop when the
-    # glasses leave the AI page.
+    # Register on this client AND its sibling (events may arrive over the
+    # classic-BT relay or the BLE channel; run_glasses.py sets rf._sibling=ble).
     for _c in (client, getattr(client, "_sibling", None)):
         if _c is not None:
             _c._ai_button_callback = _ai_button_down

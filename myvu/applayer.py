@@ -524,14 +524,26 @@ class AppLayerMixin:
             await asyncio.sleep(0.3)
             await self.push_notification("AI", answer, app_name="AI")
 
+    # VrState values (protocol/VrState.java) sent via code:106 CODE_SYNC_VR_STATE
+    VR_CLOSE = 0
+    VR_TTS_PLAY_START = 3
+    VR_TTS_PLAY_END = 4
+    VR_PROCESSION = 7
+
+    async def ai_sync_vr_state(self, state: int) -> None:
+        """Sync the voice-recognition state to the glasses: code:106
+        (CODE_SYNC_VR_STATE) with payload = the state int (matching
+        VrStateSynchronizer). Crucially, sending VR_PROCESSION (7) once we start
+        processing the recognized speech moves the glasses out of the 'listening'
+        state so their ~8s listening timeout (AssistantConstants.TIMEOUT_LISTENING)
+        stops -- otherwise they auto-close the AI page mid-answer."""
+        await self._ai_send_code(106, state)
+
     async def ai_stop_listening(self) -> None:
         """Tell the glasses to close the voice-recognition session and leave the
-        AI listening page: code:106 (CODE_SYNC_VR_STATE) with payload
-        VrState.CLOSE (0) -- matching VrStateSynchronizer.syncStateToStarGlass
-        in the app. Send this when we end a conversation from our side (stop
-        phrase, silence, no speech) so the glasses stop listening too instead of
-        sitting on the AI page waiting for more speech."""
-        await self._ai_send_code(106, 0)  # VrState.CLOSE
+        AI listening page: VrState.CLOSE (0). Send this when we end a
+        conversation from our side (stop phrase, silence, no speech)."""
+        await self.ai_sync_vr_state(self.VR_CLOSE)
 
     # ----------------------------------------------------------- mic capture
     async def capture_mic(self, seconds: float = 6.0,
