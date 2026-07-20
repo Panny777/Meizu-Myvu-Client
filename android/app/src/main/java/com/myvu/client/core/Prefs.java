@@ -17,6 +17,7 @@ public final class Prefs {
     private static final String KEY_MIRROR_BLOCKED = "mirror_blocked_packages";
     private static final String KEY_CLAUDE_KEY = "claude_api_key";
     private static final String KEY_GROQ_KEY = "groq_api_key";
+    private static final String KEY_SYSTEM_PROMPT = "ai_system_prompt";
 
     public static final String DEFAULT_MAC = "2C:6F:4E:00:DC:47";
 
@@ -76,5 +77,19 @@ public final class Prefs {
 
     public static void setGroqApiKey(Context c, String key) {
         prefs(c).edit().putString(KEY_GROQ_KEY, key).apply();
+    }
+
+    /**
+     * The assistant's system prompt, as customised in Settings. Empty means
+     * "not customised" -- ClaudeClient then falls back to its own default, so
+     * the shipped wording lives with the AI code rather than being copied here.
+     * Read fresh on every turn, so an edit applies to the next question.
+     */
+    public static String systemPrompt(Context c) {
+        return prefs(c).getString(KEY_SYSTEM_PROMPT, "");
+    }
+
+    public static void setSystemPrompt(Context c, String prompt) {
+        prefs(c).edit().putString(KEY_SYSTEM_PROMPT, prompt).apply();
     }
 }

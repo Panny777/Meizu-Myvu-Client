@@ -29,19 +29,29 @@ public class ClaudeClient {
     private static final int TIMEOUT_MS = 30000;
 
     /**
-     * Answers are spoken aloud on a pair of glasses, so length and formatting
-     * matter more than usual.
+     * The shipped default. Answers are spoken aloud on a pair of glasses, so
+     * length and formatting matter more than usual -- markdown, lists and emoji
+     * are read out as literal junk. Public so the Settings screen can show it
+     * as the placeholder and restore it with "Reset to default".
      */
-    private static final String SYSTEM_PROMPT =
+    public static final String DEFAULT_SYSTEM_PROMPT =
             "You are a voice assistant built into a pair of AR glasses. Answer in "
             + "one or two short sentences that sound natural read aloud. No "
             + "markdown, no lists, no code blocks, no emoji. If you do not know "
             + "something, say so briefly rather than guessing.";
 
     private final String apiKey;
+    private final String systemPrompt;
 
     public ClaudeClient(String apiKey) {
+        this(apiKey, null);
+    }
+
+    /** A blank prompt falls back to {@link #DEFAULT_SYSTEM_PROMPT}. */
+    public ClaudeClient(String apiKey, String systemPrompt) {
         this.apiKey = apiKey;
+        this.systemPrompt = (systemPrompt == null || systemPrompt.trim().isEmpty())
+                ? DEFAULT_SYSTEM_PROMPT : systemPrompt.trim();
     }
 
     public boolean hasKey() {
@@ -59,7 +69,7 @@ public class ClaudeClient {
             body = new JSONObject()
                     .put("model", MODEL)
                     .put("max_tokens", MAX_TOKENS)
-                    .put("system", SYSTEM_PROMPT)
+                    .put("system", systemPrompt)
                     .put("messages", new JSONArray().put(new JSONObject()
                             .put("role", "user")
                             .put("content", question)))

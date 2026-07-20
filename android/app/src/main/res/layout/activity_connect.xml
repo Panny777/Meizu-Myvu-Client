@@ -15,26 +15,42 @@
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:orientation="vertical"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
         android:paddingHorizontal="16dp"
         android:paddingTop="18dp"
         android:paddingBottom="4dp">
 
-        <TextView
-            android:layout_width="wrap_content"
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_weight="1"
             android:layout_height="wrap_content"
-            android:text="MYVU"
-            android:textColor="?attr/colorPrimary"
-            android:textSize="26sp"
-            android:textStyle="bold"
-            android:letterSpacing="0.08" />
+            android:orientation="vertical">
 
-        <TextView
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="MYVU"
+                android:textColor="?attr/colorPrimary"
+                android:textSize="26sp"
+                android:textStyle="bold"
+                android:letterSpacing="0.08" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="AR glasses client"
+                android:textAppearance="?attr/textAppearanceBodySmall"
+                android:textColor="?attr/colorOnSurfaceVariant" />
+        </LinearLayout>
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btnSettings"
+            style="@style/Widget.Material3.Button.IconButton"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="AR glasses client"
-            android:textAppearance="?attr/textAppearanceBodySmall"
-            android:textColor="?attr/colorOnSurfaceVariant" />
+            android:contentDescription="Settings"
+            app:icon="@drawable/ic_settings" />
     </LinearLayout>
 
     <com.google.android.material.tabs.TabLayout
@@ -272,26 +288,15 @@
                             android:layout_width="match_parent" android:layout_height="wrap_content"
                             android:layout_marginTop="8dp" android:text="Ask" />
 
-                        <com.google.android.material.textfield.TextInputLayout
-                            style="@style/Widget.Material3.TextInputLayout.OutlinedBox"
+                        <!-- API keys and the system prompt now live in Settings
+                             (gear, top right) so there is a single place to edit them. -->
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/btnAiSettings"
+                            style="@style/Widget.Material3.Button.TextButton"
                             android:layout_width="match_parent" android:layout_height="wrap_content"
-                            android:layout_marginTop="14dp" android:hint="Claude API key"
-                            app:endIconMode="password_toggle">
-                            <com.google.android.material.textfield.TextInputEditText
-                                android:id="@+id/txtApiKey" android:layout_width="match_parent"
-                                android:layout_height="wrap_content" android:inputType="textPassword"
-                                android:importantForAutofill="no" android:maxLines="1" />
-                        </com.google.android.material.textfield.TextInputLayout>
-                        <com.google.android.material.textfield.TextInputLayout
-                            style="@style/Widget.Material3.TextInputLayout.OutlinedBox"
-                            android:layout_width="match_parent" android:layout_height="wrap_content"
-                            android:layout_marginTop="6dp" android:hint="Groq API key (speech-to-text)"
-                            app:endIconMode="password_toggle">
-                            <com.google.android.material.textfield.TextInputEditText
-                                android:id="@+id/txtGroqKey" android:layout_width="match_parent"
-                                android:layout_height="wrap_content" android:inputType="textPassword"
-                                android:importantForAutofill="no" android:maxLines="1" />
-                        </com.google.android.material.textfield.TextInputLayout>
+                            android:layout_marginTop="6dp"
+                            app:icon="@drawable/ic_settings"
+                            android:text="API keys &amp; system prompt" />
                     </LinearLayout>
                 </com.google.android.material.card.MaterialCardView>
 

@@ -421,7 +421,9 @@ public class AiConversation {
     }
 
     private void askClaude(final String question) {
-        final ClaudeClient client = new ClaudeClient(Prefs.claudeApiKey(context));
+        // Both read fresh per turn, so edits in Settings apply to the next question.
+        final ClaudeClient client = new ClaudeClient(
+                Prefs.claudeApiKey(context), Prefs.systemPrompt(context));
         if (!client.hasKey()) {
             LogBus.warn("no Claude API key set -- add one in the app to get answers");
             finish();

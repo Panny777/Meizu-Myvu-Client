@@ -53,7 +53,7 @@ public class ConnectActivity extends AppCompatActivity implements LogBus.Listene
     private static final int REQ_PERMISSIONS = 1;
 
     private TextInputEditText txtMac, txtNotifyTitle, txtNotifyBody, txtAsk,
-            txtApiKey, txtGroqKey, txtTici, txtDest;
+            txtTici, txtDest;
     private TextView txtStatus, txtGlasses;
     private View statusDot;
     private View progress;
@@ -98,8 +98,6 @@ public class ConnectActivity extends AppCompatActivity implements LogBus.Listene
         txtNotifyTitle = findViewById(R.id.txtNotifyTitle);
         txtNotifyBody = findViewById(R.id.txtNotifyBody);
         txtAsk = findViewById(R.id.txtAsk);
-        txtApiKey = findViewById(R.id.txtApiKey);
-        txtGroqKey = findViewById(R.id.txtGroqKey);
         txtTici = findViewById(R.id.txtTici);
         txtDest = findViewById(R.id.txtDest);
         txtStatus = findViewById(R.id.txtStatus);
@@ -128,10 +126,7 @@ public class ConnectActivity extends AppCompatActivity implements LogBus.Listene
         wirePairing();
 
         txtMac.setText(Prefs.targetMac(this));
-        txtApiKey.setText(Prefs.claudeApiKey(this));
-        txtGroqKey.setText(Prefs.groqApiKey(this));
-        persist(txtApiKey, new Saver() { public void save(String v) { Prefs.setClaudeApiKey(ConnectActivity.this, v); } });
-        persist(txtGroqKey, new Saver() { public void save(String v) { Prefs.setGroqApiKey(ConnectActivity.this, v); } });
+        // API keys and the assistant's system prompt live in SettingsActivity.
 
         wireTabs();
         wireConnection();
@@ -208,6 +203,13 @@ public class ConnectActivity extends AppCompatActivity implements LogBus.Listene
                 startActivity(new Intent(ConnectActivity.this, TrackpadActivity.class));
             }
         });
+        View.OnClickListener openSettings = new View.OnClickListener() {
+            @Override public void onClick(View v) {
+                startActivity(new Intent(ConnectActivity.this, SettingsActivity.class));
+            }
+        };
+        findViewById(R.id.btnSettings).setOnClickListener(openSettings);
+        findViewById(R.id.btnAiSettings).setOnClickListener(openSettings);
     }
 
     private void wireFeatures() {
