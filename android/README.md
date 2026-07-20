@@ -46,6 +46,21 @@ nav             OSRM, RouteTracker, FusedLocation, HUD frames
 ui              connect screen + live log
 ```
 
+## Building
+
+The Gradle wrapper is checked in, so a clone needs only a JDK 17 and an Android
+SDK (`compileSdk 34`) — it fetches the pinned Gradle 8.14.3 itself:
+
+```sh
+cd android
+./gradlew :app:assembleDebug      # gradlew.bat on Windows
+./gradlew test                    # JVM unit tests (codec, crypto, protocol)
+```
+
+The APK lands in `app/build/outputs/apk/debug/`. Point the SDK location at your
+install via `local.properties` (`sdk.dir=...`) or the `ANDROID_HOME` env var —
+that file is deliberately untracked.
+
 ## Running it
 
 1. **Turn off the glasses' other central.** They accept one BLE central at a
