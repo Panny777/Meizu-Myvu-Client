@@ -36,6 +36,24 @@
          phone sleeps is not useful. -->
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
 
+    <!--
+      Android 11+ (API 30) hides other installed apps from us unless we declare
+      what we need to see. Without this, the "Mirrored apps" picker only listed
+      the handful of packages visible by default (mostly system apps), so
+      WhatsApp and friends were missing.
+
+      Declaring the LAUNCHER intent is the narrow way to do this: it reveals
+      launchable apps only, which is exactly what the picker shows. The
+      alternative, QUERY_ALL_PACKAGES, is far broader and Play treats it as a
+      restricted permission needing justification, so it is deliberately avoided.
+    -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.LAUNCHER" />
+        </intent>
+    </queries>
+
     <application
         android:allowBackup="false"
         android:label="MYVU Client"
