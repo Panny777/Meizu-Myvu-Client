@@ -4,6 +4,7 @@ import android.app.Notification;
 import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
+import android.content.pm.PackageManager;
 import android.os.Bundle;
 import android.provider.Settings;
 import android.service.notification.NotificationListenerService;
@@ -62,7 +63,13 @@ public class MirrorNotificationListener extends NotificationListenerService {
         // so nothing is forwarded unless the user picked that app in Settings.
         // isPackageAllowed() also applies the hard block list (system noise, us).
         String pkg = sbn.getPackageName();
-        if (!Prefs.isPackageAllowed(this, pkg)) return;
+        if (!Prefs.isPackageAllowed(this, pkg)) {
+            // trace(), not log(): this fires for every notification from every
+            // app the user did not opt in, and would drown the on-screen log.
+            // It is still in logcat when you need to ask "why not this app?".
+            LogBus.trace("not mirroring " + pkg + ": not in the chosen apps");
+            return;
+        }
 
         Bundle extras = n.extras;
         if (extras == null) return;
@@ -78,7 +85,14 @@ public class MirrorNotificationListener extends NotificationListenerService {
         }
 
         ConnectionManager connection = MyvuService.activeConnection();
-        if (connection == null) return;
+        if (connection == null) {
+            // This used to return silently, which made "mirroring does nothing"
+            // impossible to diagnose: the notification passed every filter and
+            // the only missing piece was the glasses. Say so.
+            LogBus.warn("not mirroring " + appLabel(pkg)
+                    + ": not connected to the glasses");
+            return;
+        }
 
         try {
             // The id is derived from package + numeric id, NOT sbn.getKey().
@@ -157,6 +171,36 @@ public class MirrorNotificationListener extends NotificationListenerService {
      * Notification access is granted in system settings, not by a runtime
      * dialog, so the UI has to check the state itself and deep-link there.
      */
+    /**
+     * Ask the system to (re)bind this listener.
+     *
+     * Reinstalling or updating the app leaves the listener ENABLED but UNBOUND:
+     * notification access still shows as granted in system settings, yet
+     * onNotificationPosted never fires again, so mirroring silently stops until
+     * the user toggles the permission off and on. Requesting a rebind on startup
+     * makes that heal itself. No-op when access was never granted.
+     */
+    public static void requestRebindIfEnabled(Context context) {
+        if (!isEnabled(context)) return;
+        ComponentName cn = new ComponentName(context, MirrorNotificationListener.class);
+        try {
+            // requestRebind() alone is NOT enough: it is meant to pair with
+            // requestUnbind(), and does nothing when the system dropped us for
+            // another reason (an app update). Cycling the component's enabled
+            // state forces the system to re-evaluate and bind it again.
+            PackageManager pm = context.getPackageManager();
+            pm.setComponentEnabledSetting(cn,
+                    PackageManager.COMPONENT_ENABLED_STATE_DISABLED,
+                    PackageManager.DONT_KILL_APP);
+            pm.setComponentEnabledSetting(cn,
+                    PackageManager.COMPONENT_ENABLED_STATE_ENABLED,
+                    PackageManager.DONT_KILL_APP);
+            NotificationListenerService.requestRebind(cn);
+        } catch (Exception e) {
+            LogBus.trace("could not request a listener rebind: " + e);
+        }
+    }
+
     public static boolean isEnabled(Context context) {
         String flat = Settings.Secure.getString(
                 context.getContentResolver(), "enabled_notification_listeners");

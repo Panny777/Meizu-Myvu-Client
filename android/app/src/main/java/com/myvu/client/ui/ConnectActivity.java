@@ -146,6 +146,9 @@ public class ConnectActivity extends AppCompatActivity implements LogBus.Listene
 
         ((MaterialSwitch) findViewById(R.id.swMirror))
                 .setChecked(MirrorNotificationListener.isEnabled(this) && Prefs.mirrorEnabled(this));
+        // An app update leaves the notification listener enabled but unbound, so
+        // mirroring dies silently until the permission is toggled. Heal it here.
+        MirrorNotificationListener.requestRebindIfEnabled(this);
     }
 
     @Override
