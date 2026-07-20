@@ -15,6 +15,7 @@ public final class Prefs {
     private static final String KEY_MAC = "target_mac";
     private static final String KEY_MIRROR_ENABLED = "mirror_notifications";
     private static final String KEY_MIRROR_BLOCKED = "mirror_blocked_packages";
+    private static final String KEY_MIRROR_ALLOWED = "mirror_allowed_packages";
     private static final String KEY_CLAUDE_KEY = "claude_api_key";
     private static final String KEY_GROQ_KEY = "groq_api_key";
     private static final String KEY_SYSTEM_PROMPT = "ai_system_prompt";
@@ -59,6 +60,30 @@ public final class Prefs {
 
     public static void setBlockedPackages(Context c, Set<String> packages) {
         prefs(c).edit().putStringSet(KEY_MIRROR_BLOCKED, packages).apply();
+    }
+
+    /**
+     * Apps the user has opted IN to mirroring, by package name.
+     *
+     * Deliberately an allowlist, not a blocklist: notifications carry OTPs, 2FA
+     * codes and private messages, and forwarding everything by default sends all
+     * of that to the glasses. Empty therefore means "mirror nothing" -- the safe
+     * reading of "the user has not chosen yet".
+     */
+    public static Set<String> allowedPackages(Context c) {
+        Set<String> stored = prefs(c).getStringSet(KEY_MIRROR_ALLOWED, null);
+        return stored != null ? stored : Collections.<String>emptySet();
+    }
+
+    public static void setAllowedPackages(Context c, Set<String> packages) {
+        // Copy: SharedPreferences must not be handed a set the caller keeps mutating.
+        prefs(c).edit().putStringSet(KEY_MIRROR_ALLOWED, new HashSet<>(packages)).apply();
+    }
+
+    /** True when {@code pkg} is opted in AND not hard-blocked. */
+    public static boolean isPackageAllowed(Context c, String pkg) {
+        return pkg != null && !blockedPackages(c).contains(pkg)
+                && allowedPackages(c).contains(pkg);
     }
 
     /** Never hard-code this: the key is entered by the user at runtime. */

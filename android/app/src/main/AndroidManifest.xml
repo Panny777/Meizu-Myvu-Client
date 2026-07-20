@@ -59,6 +59,11 @@
             android:exported="false"
             android:parentActivityName=".ui.ConnectActivity" />
 
+        <activity
+            android:name=".ui.NotificationAppsActivity"
+            android:exported="false"
+            android:parentActivityName=".ui.SettingsActivity" />
+
         <service
             android:name=".service.MyvuService"
             android:exported="false"

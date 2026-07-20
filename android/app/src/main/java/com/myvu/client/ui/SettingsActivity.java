@@ -1,5 +1,6 @@
 package com.myvu.client.ui;
 
+import android.content.Intent;
 import android.os.Bundle;
 import android.text.Editable;
 import android.text.TextWatcher;
@@ -62,9 +63,24 @@ public class SettingsActivity extends AppCompatActivity {
                 Prefs.setSystemPrompt(SettingsActivity.this, "");
             }
         });
+        findViewById(R.id.btnPickApps).setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View v) {
+                startActivity(new Intent(SettingsActivity.this, NotificationAppsActivity.class));
+            }
+        });
         findViewById(R.id.btnSettingsBack).setOnClickListener(new View.OnClickListener() {
             @Override public void onClick(View v) { finish(); }
         });
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        // Refresh after returning from the picker.
+        int n = Prefs.allowedPackages(this).size();
+        ((TextView) findViewById(R.id.txtAllowedSummary)).setText(n == 0
+                ? "No apps selected — nothing is mirrored"
+                : n + " app" + (n == 1 ? "" : "s") + " selected");
     }
 
     private interface Saver {

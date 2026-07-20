@@ -18,7 +18,6 @@ import org.json.JSONObject;
 
 import java.util.ArrayDeque;
 import java.util.Deque;
-import java.util.Set;
 
 /**
  * Mirrors the phone's real notifications onto the lens.
@@ -59,9 +58,11 @@ public class MirrorNotificationListener extends NotificationListenerService {
         if ((n.flags & Notification.FLAG_ONGOING_EVENT) != 0) return;
         if ((n.flags & Notification.FLAG_GROUP_SUMMARY) != 0) return; // duplicates its children
 
+        // Opt-in only: notifications carry OTPs, 2FA codes and private messages,
+        // so nothing is forwarded unless the user picked that app in Settings.
+        // isPackageAllowed() also applies the hard block list (system noise, us).
         String pkg = sbn.getPackageName();
-        Set<String> blocked = Prefs.blockedPackages(this);
-        if (blocked.contains(pkg)) return;
+        if (!Prefs.isPackageAllowed(this, pkg)) return;
 
         Bundle extras = n.extras;
         if (extras == null) return;
@@ -101,6 +102,8 @@ public class MirrorNotificationListener extends NotificationListenerService {
     @Override
     public void onNotificationRemoved(StatusBarNotification sbn) {
         if (sbn == null || !Prefs.mirrorEnabled(this)) return;
+        // Same gate as the show path -- never dismiss what we never mirrored.
+        if (!Prefs.isPackageAllowed(this, sbn.getPackageName())) return;
         ConnectionManager connection = MyvuService.activeConnection();
         if (connection == null) return;
         try {
