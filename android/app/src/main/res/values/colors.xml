@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- MYVU brand blue, from the official app (colorPrimary #206cff). -->
+    <color name="brand">#206CFF</color>
+    <color name="brand_dark">#1552CC</color>
+    <color name="brand_light">#5B92FF</color>
+    <color name="brand_container">#DCE7FF</color>
+    <color name="on_brand_container">#001A43</color>
+
+    <!-- Connection-state accents. -->
+    <color name="state_idle">#8A8F98</color>
+    <color name="state_connecting">#F5A623</color>
+    <color name="state_ready">#2ECC71</color>
+    <color name="state_failed">#E74C3C</color>
+
+    <!-- Light surfaces. -->
+    <color name="bg_light">#F4F6FB</color>
+    <color name="surface_light">#FFFFFF</color>
+    <color name="on_surface_light">#1A1C1E</color>
+    <color name="on_surface_variant_light">#5A5F66</color>
+    <color name="outline_light">#E2E6EE</color>
+
+    <!-- Dark surfaces. -->
+    <color name="bg_dark">#0E1116</color>
+    <color name="surface_dark">#171B22</color>
+    <color name="surface_dark_high">#1F242D</color>
+    <color name="on_surface_dark">#E6E9EF</color>
+    <color name="on_surface_variant_dark">#A2A9B4</color>
+    <color name="outline_dark">#2A303A</color>
+</resources>

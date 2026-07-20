@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- A hollow ring used for the scanning-pulse rings; tinted at runtime. -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="oval">
+    <stroke android:width="2dp" android:color="@color/brand" />
+    <solid android:color="#00000000" />
+    <size android:width="180dp" android:height="180dp" />
+</shape>

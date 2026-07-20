@@ -382,6 +382,24 @@ async def repl(client) -> None:
             await loop.run_in_executor(None, src.close)
             navstate["task"] = None
 
+    # The glasses arm AssistantConstants.TIMEOUT_LISTENING (8s) when we ack the
+    # session with code:4, and drop the link if nothing reports speech in that
+    # window. What stops the timer is the VAD-start message (code:104 type:1),
+    # NOT a VrState ping -- tested: code:106 payload 9 (VR_RESET_TIMEOUT) mid-
+    # window changed nothing, the drop still landed exactly 8s after the ack.
+    #
+    # The real app streams mic audio to a phone-side VAD and sends VAD-start
+    # about a second into the utterance. We used to send it only after Groq STT
+    # returned, ~8s in, which raced the timeout and usually lost. So VAD start/
+    # end are now driven straight off the recorder's own onset/silence detection
+    # (voice.record_until_silence callbacks), independent of how slow the rest
+    # of the pipeline is.
+    def _vad_cb(coro_fn, sid: str):
+        """Bridge a recorder callback (worker thread) onto the event loop."""
+        def _cb():
+            asyncio.run_coroutine_threadsafe(coro_fn(sid), loop)
+        return _cb
+
     async def _ai_button_down():
         if vstate["active"]:
             # Already in a turn. This is almost always the SAME button press
@@ -399,9 +417,14 @@ async def repl(client) -> None:
                 print("[AI] listening — speak now (say 'stop' to end)..."
                       if turn == 0 else "[AI] listening for a follow-up "
                                         "(say 'stop' to end)...")
+                # VAD start/end go out the instant the recorder hears speech
+                # begin/end -- see the note above; this is what keeps the
+                # glasses from timing out the session at 8s.
                 pcm, sr = await loop.run_in_executor(
                     None, lambda: voice.record_until_silence(
-                        should_stop=lambda: vstate["stop"]))
+                        should_stop=lambda: vstate["stop"],
+                        on_speech_start=_vad_cb(client.ai_vad_start, sid),
+                        on_speech_end=_vad_cb(client.ai_vad_end, sid)))
                 if vstate["stop"]:
                     break
                 if len(pcm) == 0:
@@ -412,7 +435,8 @@ async def repl(client) -> None:
                         print("[AI] no follow-up — conversation ended.")
                     break
                 print("[AI] transcribing...")
-                text = await loop.run_in_executor(None, voice.transcribe, pcm, sr)
+                text = await loop.run_in_executor(
+                    None, voice.transcribe, pcm, sr)
                 if not text:
                     print("[AI] (no speech recognized) — conversation ended.")
                     break
@@ -420,33 +444,39 @@ async def repl(client) -> None:
                 if _is_stop_phrase(text):
                     print("[AI] stop phrase heard — conversation ended.")
                     break
-                # Run the answer pipeline in PARALLEL with streaming the caption:
-                # fire the Claude request the instant we have the transcription,
-                # stream the recognized-text caption concurrently, then start
-                # Groq TTS synthesis as soon as the answer lands (overlapping any
-                # remaining caption). Playback still comes after the caption so
-                # the question is shown before the answer is spoken.
-                answer_task = asyncio.create_task(client._generate_ai_answer(text))
+                # Run the answer pipeline in PARALLEL with streaming the
+                # caption: fire the Claude request the instant we have the
+                # transcription, stream the recognized-text caption
+                # concurrently, then start Groq TTS synthesis as soon as the
+                # answer lands (overlapping any remaining caption). Playback
+                # still comes after the caption so the question is shown
+                # before the answer is spoken.
+                answer_task = asyncio.create_task(
+                    client._generate_ai_answer(text))
+                # send_vad=False: VAD start/end already went out live from
+                # the recorder callbacks above.
                 caption_task = asyncio.create_task(
-                    client.ai_send_recognized(sid, text))
+                    client.ai_send_recognized(sid, text, send_vad=False))
                 ans = await answer_task
                 print(f"AI: {ans}")
-                # run_in_executor returns a Future that's already running -- await
-                # it directly (don't wrap in create_task, which wants a coroutine)
+                # run_in_executor returns a Future that's already running --
+                # await it directly (don't wrap in create_task, which wants a
+                # coroutine)
                 synth_fut = loop.run_in_executor(None, voice.synthesize, ans)
                 await caption_task          # caption fully shown FIRST
                 # Only NOW tell the glasses we've moved from listening ->
-                # processing (VrState.VR_PROCESSION). This must come AFTER the
-                # ASR caption -- sending it first makes the glasses drop the
-                # code:101 caption frames. It stops their ~8s listening timeout
-                # from auto-closing the AI page during the (longer) TTS playback.
+                # processing (VrState.VR_PROCESSION). This must come AFTER
+                # the ASR caption -- sending it first makes the glasses drop
+                # the code:101 caption frames.
                 await client.ai_sync_vr_state(client.VR_PROCESSION)
-                prepared = await synth_fut  # TTS audio ready (synthesized in parallel)
+                prepared = await synth_fut  # TTS audio (synthesized parallel)
 
                 async def _play_prepared(_answer):
-                    return await loop.run_in_executor(None, voice.play, prepared)
+                    return await loop.run_in_executor(
+                        None, voice.play, prepared)
 
-                await client.ai_send_answer(ans, speak=_play_prepared)  # SPEAK A2DP
+                # SPEAK over A2DP
+                await client.ai_send_answer(ans, speak=_play_prepared)
                 turn += 1
         except Exception as e:  # noqa: BLE001
             print(f"[AI] error: {e}")
@@ -665,6 +695,15 @@ async def do_run(address: str, own_mac: str, bt_status: int,
         await client.set_wear_detection(True)  # default wear detection on (app default)
         await client.set_zen_mode(False)       # default do-not-disturb off
         await client.set_screen_off_time(10)   # default display auto-off to 10s
+        # BLE-only path: nothing here sets client._spp_connect_callback, so the
+        # glasses' cmd=71 (SPP_SERVER_REQUEST_CONNECT) goes unanswered. They
+        # re-request the app relay every ~2s and drop the link ~8s later. Only
+        # run_glasses.py supervises the relay, so that's the entry point for
+        # anything long-running (AI assistant, teleprompter, navigation).
+        log.warning("run.py has NO app-relay supervisor -- the glasses will "
+                    "drop the link within ~10s once they ask for the relay. "
+                    "Use run_glasses.py for real sessions; this path is for "
+                    "quick BLE-only pokes.")
         await repl(client)
     finally:
         await client.close()
@@ -698,6 +737,9 @@ def main() -> None:
     if not args.address:
         asyncio.run(do_scan())
     else:
+        # Let the audio-device lookup identify the glasses' mic/speaker by MAC
+        # rather than by their (renameable) Windows friendly name.
+        voice.set_glasses_address(args.address)
         asyncio.run(do_run(args.address, args.mac, args.bt_status,
                            args.connect_timeout))
 

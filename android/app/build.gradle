@@ -1,0 +1,49 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'com.myvu.client'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId 'com.myvu.client'
+        minSdk 26
+        targetSdk 34
+        versionCode 1
+        versionName '0.1'
+    }
+
+    buildTypes {
+        release {
+            // Keep off: the createBond(int)/hidden-API reflection in service/Bonding
+            // breaks silently under R8 without explicit keep rules.
+            minifyEnabled false
+        }
+    }
+
+    buildFeatures {
+        viewBinding true
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+}
+
+dependencies {
+    // FusedLocationProvider for turn-by-turn (replaces the Python client's
+    // pyserial NMEA reader). Kept behind nav/LocationSource so the zero-dep
+    // framework LocationManager path stays available.
+    implementation 'com.google.android.gms:play-services-location:21.3.0'
+    // Pulled in transitively by Play Services anyway; gives us AppCompatActivity.
+    implementation 'androidx.appcompat:appcompat:1.7.0'
+    implementation 'com.google.android.material:material:1.12.0'
+
+    testImplementation 'junit:junit:4.13.2'
+    // REQUIRED: the org.json in android.jar is a stub that throws
+    // RuntimeException("Stub!") under JVM unit tests, so every codec test that
+    // touches JSON would fail without a real implementation on the test path.
+    testImplementation 'org.json:json:20240303'
+}

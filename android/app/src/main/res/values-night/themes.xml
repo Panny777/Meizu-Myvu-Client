@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources xmlns:tools="http://schemas.android.com/tools">
+
+    <style name="Theme.Myvu" parent="Theme.Material3.DayNight.NoActionBar">
+        <item name="colorPrimary">@color/brand_light</item>
+        <item name="colorOnPrimary">#00214A</item>
+        <item name="colorPrimaryContainer">@color/brand_dark</item>
+        <item name="colorOnPrimaryContainer">#DCE7FF</item>
+
+        <item name="android:colorBackground">@color/bg_dark</item>
+        <item name="colorSurface">@color/surface_dark</item>
+        <item name="colorOnSurface">@color/on_surface_dark</item>
+        <item name="colorOnSurfaceVariant">@color/on_surface_variant_dark</item>
+        <item name="colorOutline">@color/outline_dark</item>
+
+        <item name="android:statusBarColor">@color/bg_dark</item>
+        <item name="android:windowLightStatusBar" tools:targetApi="m">false</item>
+    </style>
+
+    <style name="Card.Myvu" parent="Widget.Material3.CardView.Filled">
+        <item name="cardCornerRadius">20dp</item>
+        <item name="cardElevation">0dp</item>
+        <item name="contentPadding">18dp</item>
+        <item name="cardBackgroundColor">@color/surface_dark</item>
+        <item name="strokeColor">@color/outline_dark</item>
+        <item name="strokeWidth">1dp</item>
+        <item name="android:layout_marginBottom">12dp</item>
+    </style>
+</resources>

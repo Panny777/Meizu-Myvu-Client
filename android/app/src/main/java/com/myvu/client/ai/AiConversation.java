@@ -1,0 +1,582 @@
+package com.myvu.client.ai;
+
+import android.content.Context;
+import android.os.Handler;
+import android.os.Looper;
+
+import com.myvu.client.app.feature.AiProtocol;
+import com.myvu.client.core.LogBus;
+import com.myvu.client.core.Prefs;
+
+import java.util.Locale;
+import java.util.UUID;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+
+/**
+ * The AI assistant, driven by the GLASSES' microphone.
+ *
+ * The glasses record audio themselves and stream it to the phone as code:109
+ * Opus packets; the phone is expected to recognise it and send captions back.
+ * That is why there is no SpeechRecognizer here -- it cannot be fed an audio
+ * stream below API 33, and the audio is not ours to begin with.
+ *
+ * The glasses stream CONTINUOUSLY once the assistant is open -- silence
+ * included -- so the packet stream carries no end-of-speech signal. Packets are
+ * therefore decoded as they arrive and end-of-speech is found by measuring
+ * audio energy, which is what the official app does with its native VAD
+ * (VadDetector, feeding 512-byte chunks with a 600ms pause).
+ *
+ * THE ORDER BELOW IS THE PROTOCOL. The glasses run real timers:
+ *   code:4            immediately, before any slow work (arms an 8s timeout)
+ *   code:104 type:1   on the first audio packet -- the only thing that clears it
+ *   code:104 type:2   when the audio stops
+ *   code:101 type:0   growing partials, so the caption builds instead of flashing
+ *   code:101 type:1   final caption
+ *   code:106 (7)      VR_PROCESSION, AFTER the caption or the glasses drop it
+ *   code:5 -> 6/1 -> audio -> 6/2 -> 107
+ *
+ * THREADING: TextToSpeech is looper-affine, so this lives on the main thread.
+ * Decoding and the network calls run on a worker; sends hop to the connection
+ * thread inside the sender.
+ */
+public class AiConversation {
+
+    public interface Sender {
+        void send(String actionJson, String targetPkg, String sourcePkg);
+    }
+
+    /**
+     * How long the audio must stay quiet before the utterance is considered
+     * over. The official app's VadDetector uses setVadPause(600); a little more
+     * is used here because this is a plain energy threshold rather than their
+     * native VAD, and cutting someone off mid-sentence is worse than waiting.
+     */
+    private static final long SILENCE_HOLD_MS = 900;
+
+    /**
+     * Mean sample amplitude above which a chunk counts as speech.
+     *
+     * The glasses stream CONTINUOUSLY while the assistant is open -- silence
+     * included -- so there is no gap in the packet stream to detect. Energy is
+     * the only signal available without a VAD model.
+     */
+    private static final double SPEECH_ENERGY = 80.0;
+
+    /**
+     * Speech must exceed the measured noise floor by this factor.
+     *
+     * A fixed threshold fired before anyone spoke, because the absolute level
+     * depends on the microphone, its gain and the room. Calibrating against the
+     * first moments of each utterance adapts to all three.
+     */
+    private static final double SPEECH_OVER_NOISE = 3.5;
+    /** Chunks sampled at the start of listening to establish the noise floor. */
+    private static final int NOISE_CALIBRATION_CHUNKS = 12;
+
+    /** Give up if the glasses never send anything loud enough to be speech. */
+    private static final long NO_SPEECH_TIMEOUT_MS = 10000;
+    /** Hard cap on one utterance, in case the stream never goes quiet. */
+    private static final long MAX_UTTERANCE_MS = 20000;
+    /** Spacing for the simulated growing caption (Whisper returns text at once). */
+    private static final long CAPTION_WORD_MS = 180;
+
+    private static final long DUPLICATE_TRIGGER_MS = 1500;
+    private static final int MAX_TURNS = 10;
+
+    private static final String[] STOP_PHRASES = {
+            "stop", "goodbye", "good bye", "bye", "exit", "quit",
+            "that's all", "thats all", "that is all", "never mind", "nevermind",
+            "thank you", "thanks", "cancel", "end",
+    };
+
+    private final Context context;
+    private final Sender sender;
+    private final Handler main = new Handler(Looper.getMainLooper());
+    private final ExecutorService worker = Executors.newSingleThreadExecutor();
+
+    private final GlassesMicStream mic = new GlassesMicStream();
+    private final OpusDecoderStream decoder = new OpusDecoderStream();
+    private final TtsPlayer tts;
+    /** Decoding runs off the connection thread; audio arrives faster than realtime. */
+    private final ExecutorService audio = Executors.newSingleThreadExecutor();
+
+    private volatile long lastSpeechAt;
+    private volatile boolean decoding;
+    /** Diagnostics for the no-speech case: was there audio, and how loud? */
+    private volatile double peakEnergy;
+    private volatile int decodedBytes;
+    private volatile double noiseFloor;
+    private volatile int noiseChunks;
+    private volatile double speechThreshold;
+
+    private volatile boolean active;
+    private String sessionId;
+    private int turnCount;
+    private boolean stopRequested;
+    private boolean speechStarted;
+    private long lastTriggerAt;
+    /** True for a typed ask: no follow-up listening turn after the answer. */
+    private boolean textMode;
+
+    private final Runnable silenceTimeout = new Runnable() {
+        @Override
+        public void run() {
+            endUtterance();
+        }
+    };
+    private final Runnable utteranceCap = new Runnable() {
+        @Override
+        public void run() {
+            LogBus.log("AI: utterance hit the length cap");
+            endUtterance();
+        }
+    };
+
+    public AiConversation(Context context, Sender sender) {
+        this.context = context.getApplicationContext();
+        this.sender = sender;
+        this.tts = new TtsPlayer(this.context);
+    }
+
+    public boolean isActive() {
+        return active;
+    }
+
+    // ---------------------------------------------------------- triggers
+
+    /** The AI button (code:3) or wake word (code:7). Safe from any thread. */
+    public void onTrigger(final int triggerCode) {
+        main.post(new Runnable() {
+            @Override
+            public void run() {
+                long now = System.currentTimeMillis();
+                // The same physical press arrives on both transports.
+                if (now - lastTriggerAt < DUPLICATE_TRIGGER_MS) {
+                    LogBus.trace("AI trigger ignored -- duplicate of the last press");
+                    return;
+                }
+                lastTriggerAt = now;
+
+                // A genuinely new press always wins: our view of the session goes
+                // stale whenever the user quits the AI page on the glasses, and
+                // ignoring the press left the assistant dead until a reconnect.
+                if (active) {
+                    LogBus.log("AI: new press while a turn was open -- restarting");
+                    abandon();
+                }
+                begin(triggerCode);
+            }
+        });
+    }
+
+    /** The glasses reported the AI page closing (control:0). */
+    public void onPageClosed() {
+        main.post(new Runnable() {
+            @Override
+            public void run() {
+                if (!active) return;
+                stopRequested = true;
+                LogBus.trace("AI page closed -- will end after this turn");
+            }
+        });
+    }
+
+    /**
+     * Offers a code:109 relay body. Returns true if it held audio, so the caller
+     * can skip the usual JSON handling.
+     *
+     * Called on the connection thread at a high rate -- this must stay cheap.
+     */
+    public boolean onAudioFrame(byte[] relayBody) {
+        if (!mic.offer(relayBody)) return false;
+        if (!mic.isCapturing()) return true;
+
+        // A payload can carry more than one Opus frame; decode every one.
+        final java.util.List<byte[]> frames = new java.util.ArrayList<>(mic.justAdded());
+        if (frames.isEmpty()) return true;
+
+        // Decode off the connection thread: audio arrives faster than realtime
+        // and MediaCodec must never block the relay.
+        audio.execute(new Runnable() {
+            @Override
+            public void run() {
+                for (byte[] frame : frames) {
+                    if (!decoding) return;
+                    byte[] pcm = decoder.feed(frame);
+                    if (pcm.length == 0) continue;
+
+                    decodedBytes += pcm.length;
+                    double level = OpusDecoderStream.energy(pcm);
+                    if (level > peakEnergy) peakEnergy = level;
+
+                    consume(level);
+                }
+            }
+        });
+        return true;
+    }
+
+    /** Applies one decoded chunk's energy to the VAD state machine. Runs on the audio thread. */
+    private void consume(double level) {
+        // Spend the first chunks learning the room, then set the bar relative to
+        // it. Anything before that cannot be speech.
+        if (noiseChunks < NOISE_CALIBRATION_CHUNKS) {
+            noiseChunks++;
+            noiseFloor = ((noiseFloor * (noiseChunks - 1)) + level) / noiseChunks;
+            speechThreshold = Math.max(SPEECH_ENERGY, noiseFloor * SPEECH_OVER_NOISE);
+            if (noiseChunks == NOISE_CALIBRATION_CHUNKS) {
+                LogBus.trace(String.format(Locale.US,
+                        "AI: noise floor %.0f, speech threshold %.0f",
+                        noiseFloor, speechThreshold));
+            }
+            return;
+        }
+        if (level >= speechThreshold) {
+            lastSpeechAt = System.currentTimeMillis();
+            if (!speechStarted) {
+                speechStarted = true;
+                main.post(new Runnable() {
+                    @Override
+                    public void run() {
+                        if (!active) return;
+                        // The only message that clears the glasses' 8s timeout.
+                        send(AiProtocol.vadStart(sessionId));
+                        LogBus.log("AI: speech detected");
+                    }
+                });
+            }
+        } else if (speechStarted
+                && System.currentTimeMillis() - lastSpeechAt > SILENCE_HOLD_MS) {
+            // Quiet for long enough after real speech: utterance over.
+            decoding = false;
+            main.post(new Runnable() {
+                @Override
+                public void run() { endUtterance(); }
+            });
+        }
+    }
+
+    // ------------------------------------------------------------- turns
+
+    private void begin(int triggerCode) {
+        active = true;
+        stopRequested = false;
+        textMode = false;
+        turnCount = 0;
+        tts.init();
+        startListening(triggerCode == AiProtocol.CODE_START_VR_REQ ? "button" : "wake word");
+    }
+
+    private void startListening(String why) {
+        sessionId = UUID.randomUUID().toString();
+        speechStarted = false;
+        lastSpeechAt = 0;
+        peakEnergy = 0;
+        decodedBytes = 0;
+        noiseFloor = 0;
+        noiseChunks = 0;
+        speechThreshold = SPEECH_ENERGY;
+        mic.start();
+        try {
+            decoder.start();
+            decoding = true;
+        } catch (Exception e) {
+            LogBus.error("could not start the Opus decoder", e);
+            finish();
+            return;
+        }
+
+        // Must be first: this ack is what stops the glasses showing "service
+        // error", and it arms their 8s listening timeout.
+        send(AiProtocol.sessionAck(sessionId));
+        LogBus.log("AI listening (" + why + ")");
+
+        // If nothing loud enough to be speech ever arrives, give up rather
+        // than listen forever -- the glasses stream silence indefinitely.
+        main.removeCallbacks(silenceTimeout);
+        main.postDelayed(silenceTimeout, NO_SPEECH_TIMEOUT_MS);
+        main.removeCallbacks(utteranceCap);
+        main.postDelayed(utteranceCap, MAX_UTTERANCE_MS);
+    }
+
+    /** The audio went quiet: recognise what the decoder has produced. */
+    private void endUtterance() {
+        if (!active || !mic.isCapturing()) return;
+        main.removeCallbacks(silenceTimeout);
+        main.removeCallbacks(utteranceCap);
+        mic.stop();
+        decoding = false;
+
+        if (!speechStarted) {
+            // Say WHY: whether audio arrived, whether it decoded, and how loud
+            // it got. Those three numbers separate "mic silent" from "decode
+            // broken" from "threshold too high".
+            LogBus.warn(String.format(Locale.US,
+                    "AI: no speech heard -- %d packets in (%d unreadable), sizes %s, "
+                            + "%d bytes decoded (%dms), peak energy %.0f vs threshold %.0f",
+                    mic.packetCount(), mic.rejectedCount(), mic.observedSizes(),
+                    decodedBytes,
+                    decodedBytes / 2 * 1000 / OpusStream.SAMPLE_RATE,
+                    peakEnergy, speechThreshold));
+            finish();
+            return;
+        }
+        send(AiProtocol.vadEnd(sessionId));
+
+        // Flush the decoder's latency tail before reading, or the last packets
+        // of every utterance are lost.
+        decoder.finish();
+        final byte[] pcm = decoder.allPcm();
+        decoder.stop();
+        LogBus.log("captured " + (pcm.length / 2) + " samples ("
+                + (pcm.length / 2 * 1000 / Math.max(1, decoder.sampleRate())) + "ms @ "
+                + decoder.sampleRate() + "Hz) from " + mic.packetCount() + " Opus packets");
+        if (pcm.length == 0) {
+            LogBus.log("AI: no audio decoded -- ending");
+            finish();
+            return;
+        }
+        transcribe(pcm, decoder.sampleRate(), decoder.channels());
+    }
+
+    private void transcribe(final byte[] pcm, final int sampleRate, final int channels) {
+        final GroqWhisper whisper = new GroqWhisper(Prefs.groqApiKey(context));
+        if (!whisper.hasKey()) {
+            LogBus.warn("no Groq API key set -- speech cannot be transcribed");
+            finish();
+            return;
+        }
+        worker.execute(new Runnable() {
+            @Override
+            public void run() {
+                final String text;
+                try {
+                    text = whisper.transcribe(pcm, sampleRate, channels);
+                } catch (Exception e) {
+                    LogBus.error("could not transcribe the glasses audio", e);
+                    main.post(new Runnable() {
+                        @Override
+                        public void run() { finish(); }
+                    });
+                    return;
+                }
+                main.post(new Runnable() {
+                    @Override
+                    public void run() { onTranscript(text); }
+                });
+            }
+        });
+    }
+
+    private void onTranscript(String text) {
+        if (!active) return;
+        if (text == null || text.trim().isEmpty()) {
+            LogBus.log("AI: nothing understood -- ending the conversation");
+            finish();
+            return;
+        }
+        if (isStopPhrase(text)) {
+            LogBus.log("AI: stop phrase heard (\"" + text.trim() + "\")");
+            finish();
+            return;
+        }
+        LogBus.log("AI heard: " + text);
+        sendGrowingCaption(text.trim(), 0);
+    }
+
+    /**
+     * Builds the caption up word by word.
+     *
+     * Whisper returns the whole sentence at once, but the glasses expect a
+     * series of growing partials -- sending it as one partial makes the caption
+     * flash and vanish. Same simulation the Python client uses.
+     */
+    private void sendGrowingCaption(final String text, final int wordIndex) {
+        if (!active) return;
+        final String[] words = text.split("\\s+");
+
+        if (wordIndex >= words.length) {
+            send(AiProtocol.asrResult(sessionId, text, true));
+            // VR_PROCESSION only AFTER the final caption, or the glasses drop
+            // the caption frames entirely.
+            send(AiProtocol.vrState(AiProtocol.VR_PROCESSION));
+            askClaude(text);
+            return;
+        }
+
+        StringBuilder partial = new StringBuilder();
+        for (int i = 0; i <= wordIndex; i++) {
+            if (i > 0) partial.append(' ');
+            partial.append(words[i]);
+        }
+        send(AiProtocol.asrResult(sessionId, partial.toString(), false));
+
+        main.postDelayed(new Runnable() {
+            @Override
+            public void run() {
+                sendGrowingCaption(text, wordIndex + 1);
+            }
+        }, CAPTION_WORD_MS);
+    }
+
+    private void askClaude(final String question) {
+        final ClaudeClient client = new ClaudeClient(Prefs.claudeApiKey(context));
+        if (!client.hasKey()) {
+            LogBus.warn("no Claude API key set -- add one in the app to get answers");
+            finish();
+            return;
+        }
+        worker.execute(new Runnable() {
+            @Override
+            public void run() {
+                final String answer;
+                try {
+                    answer = client.ask(question);
+                } catch (Exception e) {
+                    LogBus.error("Claude request failed", e);
+                    main.post(new Runnable() {
+                        @Override
+                        public void run() { finish(); }
+                    });
+                    return;
+                }
+                main.post(new Runnable() {
+                    @Override
+                    public void run() { deliver(answer); }
+                });
+            }
+        });
+    }
+
+    private void deliver(String answer) {
+        if (!active) return;
+        LogBus.log("AI answer: " + answer);
+
+        send(AiProtocol.answerCard(answer));
+        send(AiProtocol.playState(AiProtocol.PLAY_STATE_START));
+
+        tts.speak(answer, new TtsPlayer.Callback() {
+            @Override
+            public void onSpoken(boolean success) {
+                // Gated on the real completion callback, never a timer.
+                send(AiProtocol.playState(AiProtocol.PLAY_STATE_END));
+                send(AiProtocol.endTurn());
+                if (!success) LogBus.warn("the answer could not be spoken aloud");
+                // A typed question is one-shot; a spoken one keeps listening.
+                if (textMode) finish(); else nextTurn();
+            }
+        });
+    }
+
+    /**
+     * Answers a TYPED question (REPL: ask), bypassing the microphone entirely.
+     *
+     * Reuses the whole answer path -- caption, card, TTS, end -- so the glasses
+     * show and speak the reply just as they would for a voice query, but there
+     * is no follow-up listening turn afterwards.
+     */
+    public void askText(final String question) {
+        if (question == null || question.trim().isEmpty()) return;
+        main.post(new Runnable() {
+            @Override
+            public void run() {
+                if (active) abandon();
+                active = true;
+                stopRequested = false;
+                textMode = true;
+                turnCount = 0;
+                tts.init();
+                sessionId = UUID.randomUUID().toString();
+
+                // Bring the glasses' AI page up and show the question as the
+                // caption, then hand off to the shared answer path.
+                send(AiProtocol.sessionAck(sessionId));
+                send(AiProtocol.asrResult(sessionId, question.trim(), true));
+                send(AiProtocol.vrState(AiProtocol.VR_PROCESSION));
+                LogBus.log("AI (typed): " + question.trim());
+                askClaude(question.trim());
+            }
+        });
+    }
+
+    /**
+     * Starts a follow-up turn rather than closing the session.
+     *
+     * VR_CLOSE quits the AI page outright, so sending it after every answer made
+     * the page vanish as soon as the reply finished. It belongs only at the end
+     * of the whole conversation.
+     */
+    private void nextTurn() {
+        if (!active) return;
+        if (stopRequested) {
+            LogBus.log("AI: page was closed -- ending the conversation");
+            finish();
+            return;
+        }
+        if (++turnCount >= MAX_TURNS) {
+            LogBus.log("AI: conversation limit reached");
+            finish();
+            return;
+        }
+        startListening("follow-up " + (turnCount + 1));
+    }
+
+    // -------------------------------------------------------------- end
+
+    /** Ends the conversation and returns the glasses to idle. */
+    private void finish() {
+        if (!active) return;
+        active = false;
+        stopRequested = false;
+        mic.stop();
+        decoding = false;
+        decoder.stop();
+        main.removeCallbacks(silenceTimeout);
+        main.removeCallbacks(utteranceCap);
+        send(AiProtocol.vrState(AiProtocol.VR_CLOSE));
+        LogBus.trace("AI conversation ended");
+    }
+
+    /** Drops local state without messaging the glasses (they have moved on). */
+    private void abandon() {
+        active = false;
+        stopRequested = false;
+        mic.stop();
+        decoding = false;
+        decoder.stop();
+        main.removeCallbacks(silenceTimeout);
+        main.removeCallbacks(utteranceCap);
+    }
+
+    public void stop() {
+        main.post(new Runnable() {
+            @Override
+            public void run() { finish(); }
+        });
+    }
+
+    public void shutdown() {
+        stop();
+        main.post(new Runnable() {
+            @Override
+            public void run() { tts.shutdown(); }
+        });
+        worker.shutdownNow();
+        audio.shutdownNow();
+    }
+
+    private static boolean isStopPhrase(String text) {
+        String t = text.trim().toLowerCase(Locale.US).replaceAll("[.!?,]", "");
+        for (String phrase : STOP_PHRASES) {
+            if (t.equals(phrase)) return true;
+        }
+        return false;
+    }
+
+    /** All AI messages are sourced from and addressed to the assistant package. */
+    private void send(String actionJson) {
+        if (actionJson == null) return;
+        sender.send(actionJson, AiProtocol.PKG, AiProtocol.PKG);
+    }
+}

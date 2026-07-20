@@ -1,0 +1,624 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="?android:attr/colorBackground">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:orientation="vertical">
+
+    <!-- ===== Top bar ===== -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:paddingHorizontal="16dp"
+        android:paddingTop="18dp"
+        android:paddingBottom="4dp">
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="MYVU"
+            android:textColor="?attr/colorPrimary"
+            android:textSize="26sp"
+            android:textStyle="bold"
+            android:letterSpacing="0.08" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="AR glasses client"
+            android:textAppearance="?attr/textAppearanceBodySmall"
+            android:textColor="?attr/colorOnSurfaceVariant" />
+    </LinearLayout>
+
+    <com.google.android.material.tabs.TabLayout
+        android:id="@+id/tabs"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        app:tabMode="fixed"
+        app:tabGravity="fill"
+        app:tabIndicatorColor="?attr/colorPrimary"
+        app:tabSelectedTextColor="?attr/colorPrimary"
+        app:tabTextColor="?attr/colorOnSurfaceVariant">
+
+        <com.google.android.material.tabs.TabItem
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Controls" />
+
+        <com.google.android.material.tabs.TabItem
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Log" />
+    </com.google.android.material.tabs.TabLayout>
+
+    <FrameLayout
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1">
+
+        <!-- ============================ CONTROLS PAGE ============================ -->
+        <androidx.core.widget.NestedScrollView
+            android:id="@+id/pageControls"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:fillViewport="true">
+
+            <LinearLayout
+                android:id="@+id/content"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:paddingHorizontal="16dp"
+                android:paddingTop="12dp"
+                android:paddingBottom="32dp">
+
+                <!-- Connection status -->
+                <com.google.android.material.card.MaterialCardView
+                    android:id="@+id/cardStatus"
+                    style="@style/Card.Myvu"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content">
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="vertical">
+
+                        <LinearLayout
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:gravity="center_vertical"
+                            android:orientation="horizontal">
+
+                            <View
+                                android:id="@+id/statusDot"
+                                android:layout_width="14dp"
+                                android:layout_height="14dp"
+                                android:layout_marginEnd="10dp"
+                                android:background="@drawable/status_dot" />
+
+                            <TextView
+                                android:id="@+id/txtStatus"
+                                android:layout_width="0dp"
+                                android:layout_height="wrap_content"
+                                android:layout_weight="1"
+                                android:text="Disconnected"
+                                android:textAppearance="?attr/textAppearanceTitleMedium"
+                                android:textStyle="bold" />
+
+                            <ProgressBar
+                                android:id="@+id/progress"
+                                android:layout_width="22dp"
+                                android:layout_height="22dp"
+                                android:indeterminateTint="?attr/colorPrimary"
+                                android:visibility="gone" />
+                        </LinearLayout>
+
+                        <TextView
+                            android:id="@+id/txtGlasses"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="4dp"
+                            android:layout_marginStart="24dp"
+                            android:textAppearance="?attr/textAppearanceBodySmall"
+                            android:textColor="?attr/colorOnSurfaceVariant"
+                            android:visibility="gone" />
+
+                        <com.google.android.material.textfield.TextInputLayout
+                            style="@style/Widget.Material3.TextInputLayout.OutlinedBox"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="12dp"
+                            app:helperTextEnabled="true"
+                            app:helperText="Leave blank to auto-search"
+                            android:hint="Glasses MAC address">
+
+                            <com.google.android.material.textfield.TextInputEditText
+                                android:id="@+id/txtMac"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:inputType="textCapCharacters"
+                                android:importantForAutofill="no"
+                                android:maxLines="1" />
+                        </com.google.android.material.textfield.TextInputLayout>
+
+                        <LinearLayout
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="6dp"
+                            android:orientation="horizontal">
+
+                            <com.google.android.material.button.MaterialButton
+                                android:id="@+id/btnConnect"
+                                android:layout_width="0dp"
+                                android:layout_height="wrap_content"
+                                android:layout_weight="1"
+                                android:layout_marginEnd="6dp"
+                                android:text="Connect" />
+
+                            <com.google.android.material.button.MaterialButton
+                                android:id="@+id/btnDisconnect"
+                                style="@style/Widget.Material3.Button.TonalButton"
+                                android:layout_width="0dp"
+                                android:layout_height="wrap_content"
+                                android:layout_weight="1"
+                                android:layout_marginStart="6dp"
+                                android:text="Disconnect" />
+                        </LinearLayout>
+
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/btnTrackpad"
+                            style="@style/Widget.Material3.Button.OutlinedButton"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="6dp"
+                            app:icon="@drawable/ic_trackpad"
+                            android:text="Open trackpad" />
+                    </LinearLayout>
+                </com.google.android.material.card.MaterialCardView>
+
+                <!-- Notifications -->
+                <com.google.android.material.card.MaterialCardView
+                    style="@style/Card.Myvu"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content">
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="vertical">
+
+                        <TextView style="@style/CardTitle.Myvu"
+                            android:layout_width="wrap_content" android:layout_height="wrap_content"
+                            android:text="Notifications" />
+
+                        <com.google.android.material.textfield.TextInputLayout
+                            style="@style/Widget.Material3.TextInputLayout.OutlinedBox"
+                            android:layout_width="match_parent" android:layout_height="wrap_content"
+                            android:layout_marginTop="10dp" android:hint="Title (optional)">
+                            <com.google.android.material.textfield.TextInputEditText
+                                android:id="@+id/txtNotifyTitle" android:layout_width="match_parent"
+                                android:layout_height="wrap_content" android:maxLines="1"
+                                android:importantForAutofill="no" />
+                        </com.google.android.material.textfield.TextInputLayout>
+
+                        <com.google.android.material.textfield.TextInputLayout
+                            style="@style/Widget.Material3.TextInputLayout.OutlinedBox"
+                            android:layout_width="match_parent" android:layout_height="wrap_content"
+                            android:layout_marginTop="6dp" android:hint="Message">
+                            <com.google.android.material.textfield.TextInputEditText
+                                android:id="@+id/txtNotifyBody" android:layout_width="match_parent"
+                                android:layout_height="wrap_content" android:maxLines="3"
+                                android:importantForAutofill="no" />
+                        </com.google.android.material.textfield.TextInputLayout>
+
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/btnNotify"
+                            style="@style/Widget.Material3.Button.TonalButton"
+                            android:layout_width="match_parent" android:layout_height="wrap_content"
+                            android:layout_marginTop="8dp" android:text="Send to lens" />
+
+                        <View android:layout_width="match_parent" android:layout_height="1dp"
+                            android:layout_marginVertical="14dp" android:background="?attr/colorOutline" />
+
+                        <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                            android:gravity="center_vertical" android:orientation="horizontal">
+                            <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content"
+                                android:layout_weight="1" android:orientation="vertical">
+                                <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
+                                    android:text="Mirror phone notifications"
+                                    android:textAppearance="?attr/textAppearanceBodyLarge" />
+                                <TextView style="@style/Label.Myvu" android:layout_width="wrap_content"
+                                    android:layout_height="wrap_content"
+                                    android:text="Forward real SMS / chat to the lens" />
+                            </LinearLayout>
+                            <com.google.android.material.materialswitch.MaterialSwitch
+                                android:id="@+id/swMirror" android:layout_width="wrap_content"
+                                android:layout_height="wrap_content" />
+                        </LinearLayout>
+                    </LinearLayout>
+                </com.google.android.material.card.MaterialCardView>
+
+                <!-- AI assistant -->
+                <com.google.android.material.card.MaterialCardView
+                    style="@style/Card.Myvu"
+                    android:layout_width="match_parent" android:layout_height="wrap_content">
+                    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                        android:orientation="vertical">
+                        <TextView style="@style/CardTitle.Myvu" android:layout_width="wrap_content"
+                            android:layout_height="wrap_content" android:text="AI assistant" />
+                        <TextView style="@style/Label.Myvu" android:layout_width="wrap_content"
+                            android:layout_height="wrap_content" android:layout_marginTop="2dp"
+                            android:text="Press the glasses button and speak, or type below" />
+
+                        <com.google.android.material.textfield.TextInputLayout
+                            style="@style/Widget.Material3.TextInputLayout.OutlinedBox"
+                            android:layout_width="match_parent" android:layout_height="wrap_content"
+                            android:layout_marginTop="10dp" android:hint="Ask a question">
+                            <com.google.android.material.textfield.TextInputEditText
+                                android:id="@+id/txtAsk" android:layout_width="match_parent"
+                                android:layout_height="wrap_content" android:maxLines="2"
+                                android:importantForAutofill="no" />
+                        </com.google.android.material.textfield.TextInputLayout>
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/btnAsk" style="@style/Widget.Material3.Button.TonalButton"
+                            android:layout_width="match_parent" android:layout_height="wrap_content"
+                            android:layout_marginTop="8dp" android:text="Ask" />
+
+                        <com.google.android.material.textfield.TextInputLayout
+                            style="@style/Widget.Material3.TextInputLayout.OutlinedBox"
+                            android:layout_width="match_parent" android:layout_height="wrap_content"
+                            android:layout_marginTop="14dp" android:hint="Claude API key"
+                            app:endIconMode="password_toggle">
+                            <com.google.android.material.textfield.TextInputEditText
+                                android:id="@+id/txtApiKey" android:layout_width="match_parent"
+                                android:layout_height="wrap_content" android:inputType="textPassword"
+                                android:importantForAutofill="no" android:maxLines="1" />
+                        </com.google.android.material.textfield.TextInputLayout>
+                        <com.google.android.material.textfield.TextInputLayout
+                            style="@style/Widget.Material3.TextInputLayout.OutlinedBox"
+                            android:layout_width="match_parent" android:layout_height="wrap_content"
+                            android:layout_marginTop="6dp" android:hint="Groq API key (speech-to-text)"
+                            app:endIconMode="password_toggle">
+                            <com.google.android.material.textfield.TextInputEditText
+                                android:id="@+id/txtGroqKey" android:layout_width="match_parent"
+                                android:layout_height="wrap_content" android:inputType="textPassword"
+                                android:importantForAutofill="no" android:maxLines="1" />
+                        </com.google.android.material.textfield.TextInputLayout>
+                    </LinearLayout>
+                </com.google.android.material.card.MaterialCardView>
+
+                <!-- Teleprompter -->
+                <com.google.android.material.card.MaterialCardView
+                    style="@style/Card.Myvu"
+                    android:layout_width="match_parent" android:layout_height="wrap_content">
+                    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                        android:orientation="vertical">
+                        <TextView style="@style/CardTitle.Myvu" android:layout_width="wrap_content"
+                            android:layout_height="wrap_content" android:text="Teleprompter" />
+                        <com.google.android.material.textfield.TextInputLayout
+                            style="@style/Widget.Material3.TextInputLayout.OutlinedBox"
+                            android:layout_width="match_parent" android:layout_height="wrap_content"
+                            android:layout_marginTop="10dp" android:hint="Script text">
+                            <com.google.android.material.textfield.TextInputEditText
+                                android:id="@+id/txtTici" android:layout_width="match_parent"
+                                android:layout_height="wrap_content" android:minLines="2"
+                                android:maxLines="5" android:gravity="top"
+                                android:importantForAutofill="no" />
+                        </com.google.android.material.textfield.TextInputLayout>
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/btnTici" style="@style/Widget.Material3.Button.TonalButton"
+                            android:layout_width="match_parent" android:layout_height="wrap_content"
+                            android:layout_marginTop="8dp" android:text="Open on glasses" />
+                    </LinearLayout>
+                </com.google.android.material.card.MaterialCardView>
+
+                <!-- Display & audio -->
+                <com.google.android.material.card.MaterialCardView
+                    style="@style/Card.Myvu"
+                    android:layout_width="match_parent" android:layout_height="wrap_content">
+                    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                        android:orientation="vertical">
+                        <TextView style="@style/CardTitle.Myvu" android:layout_width="wrap_content"
+                            android:layout_height="wrap_content" android:text="Display &amp; audio" />
+
+                        <TextView android:id="@+id/lblBrightness" style="@style/Label.Myvu"
+                            android:layout_width="wrap_content" android:layout_height="wrap_content"
+                            android:layout_marginTop="10dp" android:text="Brightness" />
+                        <com.google.android.material.slider.Slider
+                            android:id="@+id/sldBrightness" android:layout_width="match_parent"
+                            android:layout_height="wrap_content" android:valueFrom="0" android:valueTo="10"
+                            android:stepSize="1" android:value="5" />
+
+                        <TextView android:id="@+id/lblVolume" style="@style/Label.Myvu"
+                            android:layout_width="wrap_content" android:layout_height="wrap_content"
+                            android:text="Volume" />
+                        <com.google.android.material.slider.Slider
+                            android:id="@+id/sldVolume" android:layout_width="match_parent"
+                            android:layout_height="wrap_content" android:valueFrom="0" android:valueTo="15"
+                            android:stepSize="1" android:value="8" />
+
+                        <TextView style="@style/Label.Myvu" android:layout_width="wrap_content"
+                            android:layout_height="wrap_content" android:layout_marginTop="6dp"
+                            android:text="Standby widget position" />
+                        <com.google.android.material.button.MaterialButtonToggleGroup
+                            android:id="@+id/fovGroup" android:layout_width="match_parent"
+                            android:layout_height="wrap_content" app:singleSelection="true"
+                            app:selectionRequired="true" android:layout_marginTop="4dp">
+                            <com.google.android.material.button.MaterialButton
+                                style="?attr/materialButtonOutlinedStyle" android:id="@+id/fov0"
+                                android:layout_width="0dp" android:layout_weight="1"
+                                android:layout_height="wrap_content" android:text="0" />
+                            <com.google.android.material.button.MaterialButton
+                                style="?attr/materialButtonOutlinedStyle" android:id="@+id/fov1"
+                                android:layout_width="0dp" android:layout_weight="1"
+                                android:layout_height="wrap_content" android:text="1" />
+                            <com.google.android.material.button.MaterialButton
+                                style="?attr/materialButtonOutlinedStyle" android:id="@+id/fov2"
+                                android:layout_width="0dp" android:layout_weight="1"
+                                android:layout_height="wrap_content" android:text="2" />
+                            <com.google.android.material.button.MaterialButton
+                                style="?attr/materialButtonOutlinedStyle" android:id="@+id/fov3"
+                                android:layout_width="0dp" android:layout_weight="1"
+                                android:layout_height="wrap_content" android:text="3" />
+                        </com.google.android.material.button.MaterialButtonToggleGroup>
+                    </LinearLayout>
+                </com.google.android.material.card.MaterialCardView>
+
+                <!-- System -->
+                <com.google.android.material.card.MaterialCardView
+                    style="@style/Card.Myvu"
+                    android:layout_width="match_parent" android:layout_height="wrap_content">
+                    <LinearLayout android:layout_width="match_parent"
+                        android:layout_height="wrap_content" android:orientation="vertical">
+                        <TextView style="@style/CardTitle.Myvu" android:layout_width="wrap_content"
+                            android:layout_height="wrap_content" android:text="System" />
+
+                        <LinearLayout android:id="@+id/rowWifi" android:layout_width="match_parent"
+                            android:layout_height="wrap_content" android:orientation="horizontal"
+                            android:gravity="center_vertical" android:layout_marginTop="10dp">
+                            <TextView android:layout_width="0dp" android:layout_weight="1"
+                                android:layout_height="wrap_content" android:text="Wi-Fi"
+                                android:textAppearance="?attr/textAppearanceBodyLarge" />
+                            <com.google.android.material.materialswitch.MaterialSwitch
+                                android:id="@+id/swWifi" android:layout_width="wrap_content"
+                                android:layout_height="wrap_content" />
+                        </LinearLayout>
+
+                        <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                            android:orientation="horizontal" android:gravity="center_vertical"
+                            android:layout_marginTop="6dp">
+                            <TextView android:layout_width="0dp" android:layout_weight="1"
+                                android:layout_height="wrap_content" android:text="Do not disturb (Zen)"
+                                android:textAppearance="?attr/textAppearanceBodyLarge" />
+                            <com.google.android.material.materialswitch.MaterialSwitch
+                                android:id="@+id/swZen" android:layout_width="wrap_content"
+                                android:layout_height="wrap_content" />
+                        </LinearLayout>
+
+                        <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                            android:orientation="horizontal" android:gravity="center_vertical"
+                            android:layout_marginTop="6dp">
+                            <TextView android:layout_width="0dp" android:layout_weight="1"
+                                android:layout_height="wrap_content" android:text="Wear detection"
+                                android:textAppearance="?attr/textAppearanceBodyLarge" />
+                            <com.google.android.material.materialswitch.MaterialSwitch
+                                android:id="@+id/swWear" android:layout_width="wrap_content"
+                                android:layout_height="wrap_content" />
+                        </LinearLayout>
+
+                        <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                            android:orientation="horizontal" android:gravity="center_vertical"
+                            android:layout_marginTop="6dp">
+                            <TextView android:layout_width="0dp" android:layout_weight="1"
+                                android:layout_height="wrap_content" android:text="Music touch-panel"
+                                android:textAppearance="?attr/textAppearanceBodyLarge" />
+                            <com.google.android.material.materialswitch.MaterialSwitch
+                                android:id="@+id/swMusicTp" android:layout_width="wrap_content"
+                                android:layout_height="wrap_content" />
+                        </LinearLayout>
+
+                        <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                            android:orientation="horizontal" android:gravity="center_vertical"
+                            android:layout_marginTop="6dp">
+                            <LinearLayout android:layout_width="0dp" android:layout_weight="1"
+                                android:layout_height="wrap_content" android:orientation="vertical">
+                                <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
+                                    android:text="Air mode"
+                                    android:textAppearance="?attr/textAppearanceBodyLarge" />
+                                <TextView style="@style/Label.Myvu" android:layout_width="wrap_content"
+                                    android:layout_height="wrap_content" android:text="Closes all apps" />
+                            </LinearLayout>
+                            <com.google.android.material.materialswitch.MaterialSwitch
+                                android:id="@+id/swAir" android:layout_width="wrap_content"
+                                android:layout_height="wrap_content" />
+                        </LinearLayout>
+
+                        <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                            android:orientation="horizontal" android:layout_marginTop="14dp">
+                            <com.google.android.material.button.MaterialButton
+                                android:id="@+id/btnSyncTime" style="?attr/materialButtonOutlinedStyle"
+                                android:layout_width="0dp" android:layout_weight="1"
+                                android:layout_height="wrap_content" android:layout_marginEnd="6dp"
+                                android:text="Sync time" />
+                            <com.google.android.material.button.MaterialButton
+                                android:id="@+id/btnDeviceInfo" style="?attr/materialButtonOutlinedStyle"
+                                android:layout_width="0dp" android:layout_weight="1"
+                                android:layout_height="wrap_content" android:layout_marginStart="6dp"
+                                android:text="Device info" />
+                        </LinearLayout>
+                    </LinearLayout>
+                </com.google.android.material.card.MaterialCardView>
+
+                <!-- Navigation -->
+                <com.google.android.material.card.MaterialCardView
+                    style="@style/Card.Myvu"
+                    android:layout_width="match_parent" android:layout_height="wrap_content">
+                    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                        android:orientation="vertical">
+                        <TextView style="@style/CardTitle.Myvu" android:layout_width="wrap_content"
+                            android:layout_height="wrap_content" android:text="Navigation" />
+                        <com.google.android.material.textfield.TextInputLayout
+                            style="@style/Widget.Material3.TextInputLayout.OutlinedBox"
+                            android:layout_width="match_parent" android:layout_height="wrap_content"
+                            android:layout_marginTop="10dp" android:hint="Destination (place or lat,lon)">
+                            <com.google.android.material.textfield.TextInputEditText
+                                android:id="@+id/txtDest" android:layout_width="match_parent"
+                                android:layout_height="wrap_content" android:maxLines="1"
+                                android:importantForAutofill="no" />
+                        </com.google.android.material.textfield.TextInputLayout>
+                        <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                            android:orientation="horizontal" android:layout_marginTop="8dp">
+                            <com.google.android.material.button.MaterialButton
+                                android:id="@+id/btnNavStart" style="@style/Widget.Material3.Button.TonalButton"
+                                android:layout_width="0dp" android:layout_weight="1"
+                                android:layout_height="wrap_content" android:layout_marginEnd="6dp"
+                                android:text="Start" />
+                            <com.google.android.material.button.MaterialButton
+                                android:id="@+id/btnNavStop" style="?attr/materialButtonOutlinedStyle"
+                                android:layout_width="0dp" android:layout_weight="1"
+                                android:layout_height="wrap_content" android:layout_marginStart="6dp"
+                                android:text="Stop" />
+                        </LinearLayout>
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/btnIcNext" style="?attr/materialButtonOutlinedStyle"
+                            android:layout_width="match_parent" android:layout_height="wrap_content"
+                            android:layout_marginTop="6dp" android:text="Calibrate turn icon" />
+                    </LinearLayout>
+                </com.google.android.material.card.MaterialCardView>
+            </LinearLayout>
+        </androidx.core.widget.NestedScrollView>
+
+        <!-- ============================ LOG PAGE ============================ -->
+        <LinearLayout
+            android:id="@+id/pageLog"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:orientation="vertical"
+            android:paddingHorizontal="16dp"
+            android:paddingTop="12dp"
+            android:paddingBottom="16dp"
+            android:visibility="gone">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+                <TextView style="@style/CardTitle.Myvu" android:layout_width="0dp"
+                    android:layout_weight="1" android:layout_height="wrap_content"
+                    android:text="Activity log" />
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnShareLog" style="@style/Widget.Material3.Button.TextButton"
+                    android:layout_width="wrap_content" android:layout_height="wrap_content"
+                    android:text="Share" />
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnClearLog" style="@style/Widget.Material3.Button.TextButton"
+                    android:layout_width="wrap_content" android:layout_height="wrap_content"
+                    android:text="Clear" />
+            </LinearLayout>
+
+            <!-- A RecyclerView, not a ScrollView+TextView: a live log is a list.
+                 RecyclerView only lays out visible rows (no re-laying-out the whole
+                 log on every append), keeps a stable scroll position while rows are
+                 added below, and gives deterministic at-bottom detection. This is
+                 what fixes the scroll jumping to top/bottom mid-drag. -->
+            <androidx.recyclerview.widget.RecyclerView
+                android:id="@+id/rvLog"
+                android:layout_width="match_parent"
+                android:layout_height="0dp"
+                android:layout_weight="1"
+                android:layout_marginTop="4dp"
+                android:background="?attr/colorSurface"
+                android:paddingHorizontal="12dp"
+                android:paddingVertical="6dp"
+                android:clipToPadding="false"
+                android:scrollbars="vertical" />
+        </LinearLayout>
+    </FrameLayout>
+    </LinearLayout>
+
+    <!-- ============================ PAIRING OVERLAY ============================ -->
+    <FrameLayout
+        android:id="@+id/pairingOverlay"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="?android:attr/colorBackground"
+        android:clickable="true"
+        android:focusable="true"
+        android:visibility="gone">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:gravity="center"
+            android:orientation="vertical"
+            android:padding="32dp">
+
+            <FrameLayout
+                android:layout_width="240dp"
+                android:layout_height="240dp"
+                android:layout_marginBottom="40dp">
+
+                <View android:id="@+id/ring3" android:layout_width="220dp"
+                    android:layout_height="220dp" android:layout_gravity="center"
+                    android:background="@drawable/scan_ring" />
+                <View android:id="@+id/ring2" android:layout_width="220dp"
+                    android:layout_height="220dp" android:layout_gravity="center"
+                    android:background="@drawable/scan_ring" />
+                <View android:id="@+id/ring1" android:layout_width="220dp"
+                    android:layout_height="220dp" android:layout_gravity="center"
+                    android:background="@drawable/scan_ring" />
+
+                <ImageView android:id="@+id/imgGlasses" android:layout_width="120dp"
+                    android:layout_height="120dp" android:layout_gravity="center"
+                    android:src="@drawable/ic_glasses"
+                    android:contentDescription="glasses" />
+
+                <ImageView android:id="@+id/imgCheck" android:layout_width="52dp"
+                    android:layout_height="52dp" android:layout_gravity="center|bottom"
+                    android:src="@drawable/ic_check_circle" android:visibility="gone"
+                    android:contentDescription="connected" />
+            </FrameLayout>
+
+            <TextView android:id="@+id/pairTitle" android:layout_width="wrap_content"
+                android:layout_height="wrap_content" android:text="Searching for your glasses"
+                android:textAppearance="?attr/textAppearanceHeadlineSmall"
+                android:textStyle="bold" android:gravity="center" />
+
+            <TextView android:id="@+id/pairSubtitle" android:layout_width="match_parent"
+                android:layout_height="wrap_content" android:layout_marginTop="8dp"
+                android:gravity="center" android:textAppearance="?attr/textAppearanceBodyLarge"
+                android:textColor="?attr/colorOnSurfaceVariant"
+                android:text="Make sure they are powered on and nearby" />
+
+            <LinearLayout android:id="@+id/pairButtons" android:layout_width="match_parent"
+                android:layout_height="wrap_content" android:layout_marginTop="36dp"
+                android:orientation="horizontal" android:gravity="center"
+                android:visibility="gone">
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnPairCancel" style="?attr/materialButtonOutlinedStyle"
+                    android:layout_width="0dp" android:layout_weight="1"
+                    android:layout_height="wrap_content" android:layout_marginEnd="6dp"
+                    android:text="Cancel" />
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnPairRetry" android:layout_width="0dp"
+                    android:layout_weight="1" android:layout_height="wrap_content"
+                    android:layout_marginStart="6dp" android:text="Try again" />
+            </LinearLayout>
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnPairDone" style="@style/Widget.Material3.Button.TonalButton"
+                android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:layout_marginTop="36dp" android:text="Done"
+                android:visibility="gone" />
+        </LinearLayout>
+    </FrameLayout>
+</FrameLayout>

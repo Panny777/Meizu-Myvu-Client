@@ -27,7 +27,98 @@ log = logging.getLogger("myvu.voice")
 GROQ_STT_MODEL = os.environ.get("GROQ_STT_MODEL", "whisper-large-v3-turbo")
 GROQ_TTS_MODEL = os.environ.get("GROQ_TTS_MODEL", "canopylabs/orpheus-v1-english")
 GROQ_TTS_VOICE = os.environ.get("GROQ_TTS_VOICE", "hannah")
-_MIC_NAME_HINT = "MYVU DC47"
+# Identifying the glasses' audio endpoints is done by BT MAC where possible and
+# by name only as a fallback -- the Windows friendly name is whatever the user
+# named the device in BT settings ("MYVU DC47", "ARIA Glasses", "Jarvis"), and
+# it can even disagree between the PnP layer and the audio endpoints on the same
+# machine. Override the name list with MYVU_AUDIO_NAME if you must.
+_NAME_HINTS = tuple(h.strip() for h in os.environ.get(
+    "MYVU_AUDIO_NAME", "MYVU DC47,ARIA Glasses").split(",") if h.strip())
+
+# Set by run.py once we know which glasses we connected to; also readable from
+# the environment so voice.py works standalone.
+_GLASSES_MAC = os.environ.get("MYVU_ADDR", "")
+
+
+def set_glasses_address(mac: str) -> None:
+    """Tell the audio-device lookup which glasses to match, by BT MAC. Lets us
+    find the right endpoints regardless of what the device has been renamed to."""
+    global _GLASSES_MAC, _endpoint_names
+    if mac and mac != _GLASSES_MAC:
+        _GLASSES_MAC, _endpoint_names = mac, None
+
+
+# Cached result of the PnP query: the audio endpoints' friendly names, or None
+# if not looked up yet / the lookup failed.
+_endpoint_names: tuple[str, ...] | None = None
+
+_PNP_QUERY = r"""
+$mac = '{mac}'
+$bt = Get-PnpDevice -Class Bluetooth -ErrorAction SilentlyContinue |
+      Where-Object {{ $_.InstanceId -match ('DEV_' + $mac) }}
+if (-not $bt) {{ exit }}
+$cids = $bt | ForEach-Object {{
+  (Get-PnpDeviceProperty -InstanceId $_.InstanceId `
+     -KeyName DEVPKEY_Device_ContainerId -ErrorAction SilentlyContinue).Data }}
+Get-PnpDevice -Class AudioEndpoint -ErrorAction SilentlyContinue | ForEach-Object {{
+  $c = (Get-PnpDeviceProperty -InstanceId $_.InstanceId `
+          -KeyName DEVPKEY_Device_ContainerId -ErrorAction SilentlyContinue).Data
+  if ($cids -contains $c) {{ $_.FriendlyName }} }}
+"""
+
+
+def _resolve_endpoint_names() -> tuple[str, ...]:
+    """Ask Windows which audio endpoints belong to the glasses' BT MAC.
+
+    Windows gives every endpoint of a Bluetooth device the same PnP ContainerId
+    as the BT device itself, whose instance ID embeds the MAC -- so this
+    identifies the mic/speaker without depending on the friendly name at all.
+    Returns () if the MAC is unknown, we're not on Windows, or the query fails,
+    in which case the caller falls back to _NAME_HINTS.
+    """
+    global _endpoint_names
+    if _endpoint_names is not None:
+        return _endpoint_names
+    _endpoint_names = ()
+    mac = _GLASSES_MAC.replace(":", "").replace("-", "").upper()
+    if len(mac) != 12 or not os.name == "nt":
+        return _endpoint_names
+    import subprocess
+    try:
+        out = subprocess.run(
+            ["powershell", "-NoProfile", "-NonInteractive", "-Command",
+             _PNP_QUERY.format(mac=mac)],
+            capture_output=True, text=True, timeout=20)
+        names = tuple(ln.strip() for ln in out.stdout.splitlines() if ln.strip())
+    except (OSError, subprocess.SubprocessError) as e:
+        log.debug("PnP endpoint lookup failed (%s); falling back to name match", e)
+        return _endpoint_names
+    if names:
+        log.info("glasses %s -> audio endpoints %s", _GLASSES_MAC, list(names))
+    else:
+        log.debug("no audio endpoints found for %s; falling back to name match", mac)
+    _endpoint_names = names
+    return _endpoint_names
+
+
+def _name_matches(name: str, suffix: str = "") -> bool:
+    """Does this sounddevice device name belong to the glasses?
+
+    Prefers the MAC-resolved endpoint names; falls back to the configured name
+    hints. `suffix` ("" for the HFP mic, " Stereo" for the A2DP speaker) picks
+    which of the device's endpoints we want. Matching is prefix-based because
+    sounddevice truncates MME device names to 31 characters.
+    """
+    for endpoint in _resolve_endpoint_names():
+        if suffix and suffix not in endpoint:
+            continue
+        if not suffix and " Stereo" in endpoint:
+            continue  # want the Hands-Free endpoint, not the A2DP one
+        if name[:31] in endpoint or endpoint[:31] in name:
+            return True
+    if _resolve_endpoint_names():
+        return False
+    return any(h + suffix in name for h in _NAME_HINTS)
 
 
 # sounddevice's blocking read/write API doesn't work on the WDM-KS host API
@@ -60,7 +151,7 @@ def find_myvu_mic() -> tuple[int, int] | None:
     apis = sd.query_hostapis()
     cands = []
     for i, d in enumerate(sd.query_devices()):
-        if d["max_input_channels"] > 0 and _MIC_NAME_HINT in d["name"]:
+        if d["max_input_channels"] > 0 and _name_matches(d["name"]):
             sr = int(d["default_samplerate"]) or 8000
             cands.append((i, apis[d["hostapi"]]["name"], sr))
     pick = _pick_by_hostapi(cands)
@@ -80,7 +171,7 @@ def find_myvu_speaker() -> tuple[int, int, int] | None:
     apis = sd.query_hostapis()
     cands = []
     for i, d in enumerate(sd.query_devices()):
-        if d["max_output_channels"] > 0 and "MYVU DC47 Stereo" in d["name"]:
+        if d["max_output_channels"] > 0 and _name_matches(d["name"], " Stereo"):
             cands.append((i, apis[d["hostapi"]]["name"],
                           int(d["default_samplerate"]) or 44100,
                           d["max_output_channels"]))
@@ -212,7 +303,8 @@ def speak(text: str) -> bool:
 
 def record_until_silence(max_seconds: float = 12.0, silence_dur: float = 1.5,
                          rms_threshold: float = 200.0, start_timeout: float = 5.0,
-                         should_stop=None):
+                         should_stop=None, on_speech_start=None,
+                         on_speech_end=None):
     """Record from the MYVU Windows HFP mic until the user stops speaking.
 
     The real glasses AI button is a short press that *starts* a listening
@@ -224,8 +316,17 @@ def record_until_silence(max_seconds: float = 12.0, silence_dur: float = 1.5,
 
     `should_stop`, if given, is a no-arg callable polled every ~100ms; when it
     returns True the recording aborts promptly and returns empty (used to let a
-    second AI-button press cancel an in-progress listen). Returns (int16 numpy
-    PCM, sample_rate). Empty array if the mic isn't found or no speech was heard.
+    second AI-button press cancel an in-progress listen).
+
+    `on_speech_start` / `on_speech_end` are no-arg callables fired (once each,
+    from THIS worker thread) the moment VAD detects speech onset and end. The
+    caller uses them to send the glasses code:104 type:1/2 in real time -- the
+    glasses arm an 8s listening timeout on code:4 and only the VAD-start message
+    stops it, so waiting until after STT to report VAD loses the link. Exceptions
+    from the callbacks are logged and swallowed so they can't kill the capture.
+
+    Returns (int16 numpy PCM, sample_rate). Empty array if the mic isn't found
+    or no speech was heard.
     """
     import time
     import numpy as np
@@ -238,6 +339,19 @@ def record_until_silence(max_seconds: float = 12.0, silence_dur: float = 1.5,
         return np.zeros(0, dtype="int16"), 8000
     dev, sr = found
     chunk = max(1, int(sr * 0.1))  # 100ms blocks
+
+    fired: set = set()
+
+    def _fire(cb, name):
+        """Call a VAD callback at most once; never let it break the capture."""
+        if cb is None or name in fired:
+            return
+        fired.add(name)
+        try:
+            cb()
+        except Exception as e:  # noqa: BLE001
+            log.warning("%s callback failed: %s", name, e)
+
     frames: list = []
     speech_started = False
     silence_start = None
@@ -257,13 +371,20 @@ def record_until_silence(max_seconds: float = 12.0, silence_dur: float = 1.5,
             frames.append(data)
             rms = float(np.sqrt(np.mean(data.astype(np.float64) ** 2))) if len(data) else 0.0
             if rms > rms_threshold:
+                if not speech_started:
+                    _fire(on_speech_start, "on_speech_start")
                 speech_started = True
                 silence_start = None
             elif speech_started:
                 if silence_start is None:
                     silence_start = now
                 elif now - silence_start > silence_dur:
+                    _fire(on_speech_end, "on_speech_end")
                     break  # end of utterance
+    # Covers the max_seconds cap, where we leave the loop mid-utterance without
+    # having seen the trailing silence.
+    if speech_started:
+        _fire(on_speech_end, "on_speech_end")
     if not frames:
         return np.zeros(0, dtype="int16"), sr
     pcm = np.concatenate(frames).flatten()

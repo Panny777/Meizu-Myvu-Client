@@ -1,0 +1,50 @@
+<!-- Simple AR glasses silhouette, tinted at runtime. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="96dp"
+    android:height="96dp"
+    android:viewportWidth="48"
+    android:viewportHeight="48"
+    android:tint="?attr/colorPrimary">
+
+    <!-- left lens -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:fillAlpha="0.16"
+        android:pathData="M6,20 m0,4 a10,7 0 1,0 20,0 a10,7 0 1,0 -20,0" />
+    <!-- right lens -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:fillAlpha="0.16"
+        android:pathData="M22,20 m0,4 a10,7 0 1,0 20,0 a10,7 0 1,0 -20,0" />
+
+    <!-- left lens outline -->
+    <path
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="2.4"
+        android:fillColor="#00000000"
+        android:pathData="M6,24 a10,7 0 1,0 20,0 a10,7 0 1,0 -20,0" />
+    <!-- right lens outline -->
+    <path
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="2.4"
+        android:fillColor="#00000000"
+        android:pathData="M22,24 a10,7 0 1,0 20,0 a10,7 0 1,0 -20,0" />
+
+    <!-- bridge -->
+    <path
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="2.4"
+        android:strokeLineCap="round"
+        android:pathData="M24,21 Q24,19 26,19" />
+    <!-- temple arms -->
+    <path
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="2.4"
+        android:strokeLineCap="round"
+        android:pathData="M6,22 L2,18" />
+    <path
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="2.4"
+        android:strokeLineCap="round"
+        android:pathData="M42,22 L46,18" />
+</vector>

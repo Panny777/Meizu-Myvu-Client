@@ -1,0 +1,17 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24"
+    android:tint="?attr/colorPrimary">
+    <!-- pad outline -->
+    <path
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="1.8"
+        android:fillColor="#00000000"
+        android:pathData="M4,5 h16 a1,1 0 0 1 1,1 v12 a1,1 0 0 1 -1,1 h-16 a1,1 0 0 1 -1,-1 v-12 a1,1 0 0 1 1,-1 z" />
+    <!-- finger dot -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M12,12 m-2,0 a2,2 0 1,0 4,0 a2,2 0 1,0 -4,0" />
+</vector>

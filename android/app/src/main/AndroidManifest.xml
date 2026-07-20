@@ -1,0 +1,76 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- Classic BT (bonding + RFCOMM) and BLE (GATT + the SPP-UUID sync). -->
+    <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
+    <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30" />
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+    <uses-permission android:name="android.permission.BLUETOOTH_SCAN" android:usesPermissionFlags="neverForLocation" />
+    <!-- Requested so we may connect the HFP/A2DP profiles (what lights the
+         glasses' "phone connected" indicator). Not granted to a non-system app,
+         so AudioProfiles treats those calls as best-effort; declaring it matches
+         the official app and lets privileged/rooted builds actually force it. -->
+    <uses-permission android:name="android.permission.BLUETOOTH_PRIVILEGED" />
+    <!-- Light haptic feedback on trackpad taps. -->
+    <uses-permission android:name="android.permission.VIBRATE" />
+
+    <!-- Turn-by-turn navigation (Phase 7). Also required for BLE scanning below API 31. -->
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+
+    <!-- AI assistant: SpeechRecognizer (Phase 8). -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+
+    <!-- Claude / OSRM / Nominatim. -->
+    <uses-permission android:name="android.permission.INTERNET" />
+
+    <!-- The connection lives in a foreground service so it survives backgrounding. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+    <!-- Mirroring real call state to the glasses (Phase 6). -->
+    <uses-permission android:name="android.permission.READ_PHONE_STATE" />
+
+    <!-- Keep the connection alive under Doze: a glasses link that dies when the
+         phone sleeps is not useful. -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+
+    <application
+        android:allowBackup="false"
+        android:label="MYVU Client"
+        android:theme="@style/Theme.Myvu">
+        <activity
+            android:name=".ui.ConnectActivity"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <activity
+            android:name=".ui.TrackpadActivity"
+            android:exported="false"
+            android:parentActivityName=".ui.ConnectActivity" />
+
+        <service
+            android:name=".service.MyvuService"
+            android:exported="false"
+            android:foregroundServiceType="connectedDevice" />
+
+        <!--
+            Mirrors real phone notifications to the lens. Access is granted by
+            the user in system settings, not via a runtime permission dialog.
+        -->
+        <service
+            android:name=".service.MirrorNotificationListener"
+            android:exported="false"
+            android:label="MYVU notification mirror"
+            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
+            <intent-filter>
+                <action android:name="android.service.notification.NotificationListenerService" />
+            </intent-filter>
+        </service>
+    </application>
+</manifest>

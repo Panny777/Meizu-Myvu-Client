@@ -462,10 +462,28 @@ class AppLayerMixin:
                                      "sessionId": session_id, "success": True})
         await asyncio.sleep(0.1)
 
+    async def ai_vad_start(self, session_id: str) -> None:
+        """code:104 type:1 -- 'the mic detected speech'. TIME-CRITICAL: the
+        glasses arm AssistantConstants.TIMEOUT_LISTENING (8s) when we ack the
+        session with code:4, and this is what stops it. The real app streams
+        audio to a phone-side VAD and sends this ~1s into the utterance; our
+        pipeline is batch, so we fire it from the recorder's speech-onset
+        callback rather than waiting for STT to come back (which took 8s and
+        cost us the link -- see record_until_silence)."""
+        await self._ai_send_code(104, {"type": 1, "sessionId": session_id})
+
+    async def ai_vad_end(self, session_id: str) -> None:
+        """code:104 type:2 -- end of speech, sent at silence detection."""
+        await self._ai_send_code(104, {"type": 2, "sessionId": session_id})
+
     async def ai_send_recognized(self, session_id: str, text: str,
                                  stream: bool = True,
-                                 word_delay: float = 0.2) -> None:
+                                 word_delay: float = 0.2,
+                                 send_vad: bool = True) -> None:
         """VAD start -> streaming ASR partials -> final -> VAD end.
+
+        `send_vad=False` skips the enclosing code:104 type:1/2 for callers that
+        already signalled VAD live from the recorder (the normal path now).
 
         The real glasses render ASR as a *growing* caption: a series of code:101
         type:0 partial results, each with a longer prefix of the recognized
@@ -475,8 +493,9 @@ class AppLayerMixin:
         at once, we simulate the stream by emitting growing word-by-word
         partials with a small delay so the caption stays visible and builds up.
         Set stream=False for the old one-shot behavior."""
-        await self._ai_send_code(104, {"type": 1, "sessionId": session_id})
-        await asyncio.sleep(0.1)
+        if send_vad:
+            await self.ai_vad_start(session_id)
+            await asyncio.sleep(0.1)
         words = text.split()
         if stream and len(words) > 1:
             partial = ""
@@ -494,8 +513,9 @@ class AppLayerMixin:
         await self._ai_send_code(101, {"id": session_id, "isOfflineResult": False,
                                        "text": text, "type": 1})
         await asyncio.sleep(0.2)
-        await self._ai_send_code(104, {"type": 2, "sessionId": session_id})
-        await asyncio.sleep(0.1)
+        if send_vad:
+            await self.ai_vad_end(session_id)
+            await asyncio.sleep(0.1)
 
     async def ai_send_answer(self, answer: str, speak=None) -> None:
         """Deliver the AI answer. The real glasses SPEAK it over A2DP (confirmed
@@ -539,6 +559,11 @@ class AppLayerMixin:
     VR_TTS_PLAY_START = 3
     VR_TTS_PLAY_END = 4
     VR_PROCESSION = 7
+    VR_LISTENING_TIMEOUT = 8
+    VR_RESET_TIMEOUT = 9
+    # Payload of the app's sendKeepListenCommand (VrStateSynchronizer). Only
+    # reachable on the domestic build, so it's an untested fallback for us.
+    VR_KEEP_LISTEN = 5
 
     async def ai_sync_vr_state(self, state: int) -> None:
         """Sync the voice-recognition state to the glasses: code:106

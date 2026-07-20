@@ -1,38 +1,39 @@
-# ---- Python ----
-__pycache__/
-*.py[cod]
-*$py.class
-*.so
-.Python
-build/
-dist/
-*.egg-info/
-.eggs/
-.pytest_cache/
-.mypy_cache/
-.ruff_cache/
+# Repo-wide ignores. Python-specific rules live in python/.gitignore.
 
-# Virtual environments
-.venv/
-venv/
-env/
-ENV/
+# ---- Secrets & local machine config -- never commit ----
+**/.env
+**/local.properties
+**/*.keystore
+**/*.jks
 
-# environment variables
-.env
+# ---- Android / Gradle build output ----
+android/build/
+android/.gradle/
+android/.kotlin/
+android/app/build/
+**/build/
+*.apk
+*.aab
 
-# ---- Voice-assistant capture artifacts (runtime output, not source) ----
-mic_capture.bin
+# ---- Reverse-engineering artifacts ----
+# The decompiled official app, packet captures and bug reports are deliberately
+# kept OUTSIDE this repo (proprietary code / device data). Never add them.
+apk_decompiled/
+bugreport-*.zip
+*.btsnoop
+btcsnoop_*
+BT_HCI_*
+
+# ---- Runtime / capture dumps ----
+*.log
 *.wav
+*.tsv
+mic_capture.bin
+scratch_*.png
 
-# Editor / OS
+# ---- Editor / OS ----
 .vscode/
 .idea/
 *.swp
 .DS_Store
 Thumbs.db
-
-# ---- Capture / scratch dumps (reverse-engineering artifacts, not source) ----
-captured_init.txt
-*.tsv
-*.log
