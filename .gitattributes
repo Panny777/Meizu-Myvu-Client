@@ -1,0 +1,19 @@
+# Normalise line endings so a clone builds on any OS.
+* text=auto
+
+# Shell scripts MUST stay LF -- CRLF makes them fail on Linux/macOS with
+# "bad interpreter: /bin/sh^M". This is what keeps ./gradlew working.
+*.sh     text eol=lf
+gradlew  text eol=lf
+
+# Windows scripts stay CRLF.
+*.bat    text eol=crlf
+*.cmd    text eol=crlf
+
+# Binaries -- never line-ending-convert these.
+*.jar    binary
+*.png    binary
+*.jpg    binary
+*.apk    binary
+*.bin    binary
+*.wav    binary
