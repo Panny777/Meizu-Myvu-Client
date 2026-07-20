@@ -65,3 +65,9 @@ form of redistributed sources.
 A hobby/interoperability project, developed and hardware-verified against one
 pair of glasses. It is not a product and comes with no warranty. See the
 disclaimer at the top.
+
+## License
+
+[MIT](LICENSE) © 2026 Panny777. The licence covers the original code in this
+repository only; it grants no rights to Meizu's trademarks, patents, or the
+decompiled app, which is not distributed here.
