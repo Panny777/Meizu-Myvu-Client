@@ -443,6 +443,7 @@ public class AiConversation {
             // VR_PROCESSION only AFTER the final caption, or the glasses drop
             // the caption frames entirely.
             send(AiProtocol.vrState(AiProtocol.VR_PROCESSION));
+            send(AiProtocol.chatQuery(sessionId, text));
             askAi(text);
             return;
         }
@@ -502,7 +503,8 @@ public class AiConversation {
         if (!active) return;
         LogBus.log("AI answer: " + answer);
 
-        send(AiProtocol.answerCard(answer));
+        send(AiProtocol.chatAnswer(sessionId, answer, 1));
+        send(AiProtocol.chatAnswer(sessionId, answer, 2));
         send(AiProtocol.playState(AiProtocol.PLAY_STATE_START));
 
         TtsPlayer.Callback callback = new TtsPlayer.Callback() {
