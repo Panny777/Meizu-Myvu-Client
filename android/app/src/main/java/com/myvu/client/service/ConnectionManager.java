@@ -156,6 +156,11 @@ public class ConnectionManager implements BleTransport.Listener, RelaySupervisor
                     if (ai != null) ai.onPageClosed();
                     return;
                 }
+                // The glasses' mic audio only flows over the app relay. With
+                // the relay down (its retry budget spent), a press listened to
+                // nothing and timed out with "0 packets in" -- so treat the
+                // press like the glasses asking for the relay back.
+                if (supervisor != null) supervisor.wake();
                 ai().onTrigger(code);
             }
         });

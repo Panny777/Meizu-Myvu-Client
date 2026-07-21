@@ -73,6 +73,11 @@ public class AiConversation {
     private static final double SPEECH_OVER_NOISE = 3.5;
     /** Chunks sampled at the start of listening to establish the noise floor. */
     private static final int NOISE_CALIBRATION_CHUNKS = 12;
+    /**
+     * Consecutive speech-level chunks during calibration that count as speech.
+     * One loud chunk could be a pop or a breath; a run of them is a word.
+     */
+    private static final int CALIBRATION_LOUD_STREAK = 3;
 
     /** Give up if the glasses never send anything loud enough to be speech. */
     private static final long NO_SPEECH_TIMEOUT_MS = 10000;
@@ -108,6 +113,7 @@ public class AiConversation {
     private volatile int decodedBytes;
     private volatile double noiseFloor;
     private volatile int noiseChunks;
+    private volatile int loudStreak;
     private volatile double speechThreshold;
 
     private volatile boolean active;
@@ -219,18 +225,33 @@ public class AiConversation {
 
     /** Applies one decoded chunk's energy to the VAD state machine. Runs on the audio thread. */
     private void consume(double level) {
-        // Spend the first chunks learning the room, then set the bar relative to
-        // it. Anything before that cannot be speech.
+        // Spend the first chunks learning the room, then set the bar relative
+        // to it -- but learn only from QUIET chunks. Averaging every early
+        // chunk unconditionally meant that talking straight after the button
+        // press folded the speech itself into the "noise floor", and the
+        // threshold (3.5x that) sat above the speaker's own level for the rest
+        // of the turn: speech was never detected.
         if (noiseChunks < NOISE_CALIBRATION_CHUNKS) {
-            noiseChunks++;
-            noiseFloor = ((noiseFloor * (noiseChunks - 1)) + level) / noiseChunks;
-            speechThreshold = Math.max(SPEECH_ENERGY, noiseFloor * SPEECH_OVER_NOISE);
-            if (noiseChunks == NOISE_CALIBRATION_CHUNKS) {
-                LogBus.trace(String.format(Locale.US,
-                        "AI: noise floor %.0f, speech threshold %.0f",
-                        noiseFloor, speechThreshold));
+            if (level < speechThreshold) {
+                loudStreak = 0;
+                noiseChunks++;
+                noiseFloor = ((noiseFloor * (noiseChunks - 1)) + level) / noiseChunks;
+                speechThreshold = Math.max(SPEECH_ENERGY, noiseFloor * SPEECH_OVER_NOISE);
+                if (noiseChunks == NOISE_CALIBRATION_CHUNKS) {
+                    LogBus.trace(String.format(Locale.US,
+                            "AI: noise floor %.0f, speech threshold %.0f",
+                            noiseFloor, speechThreshold));
+                }
+                return;
             }
-            return;
+            // Speech-level audio while still calibrating: not the room. Wait
+            // for a sustained run, then stop calibrating and let the normal
+            // detection below fire on this chunk.
+            if (++loudStreak < CALIBRATION_LOUD_STREAK) return;
+            noiseChunks = NOISE_CALIBRATION_CHUNKS;
+            LogBus.trace(String.format(Locale.US,
+                    "AI: speech before calibration finished -- floor %.0f, threshold %.0f",
+                    noiseFloor, speechThreshold));
         }
         if (level >= speechThreshold) {
             lastSpeechAt = System.currentTimeMillis();
@@ -240,6 +261,10 @@ public class AiConversation {
                     @Override
                     public void run() {
                         if (!active) return;
+                        // Speech arrived, so the no-speech timer must go: left
+                        // armed, it chopped any utterance still running at the
+                        // 10s mark. The 20s cap still bounds the turn.
+                        main.removeCallbacks(silenceTimeout);
                         // The only message that clears the glasses' 8s timeout.
                         send(AiProtocol.vadStart(sessionId));
                         LogBus.log("AI: speech detected");
@@ -276,8 +301,8 @@ public class AiConversation {
         decodedBytes = 0;
         noiseFloor = 0;
         noiseChunks = 0;
+        loudStreak = 0;
         speechThreshold = SPEECH_ENERGY;
-        mic.start();
         try {
             decoder.start();
             decoding = true;
@@ -286,6 +311,11 @@ public class AiConversation {
             finish();
             return;
         }
+        // Capture opens only once the decoder is live: frames offered while
+        // MediaCodec was still starting were queued and then dropped by the
+        // decoding check, losing the start of the utterance and pushing the
+        // calibration window into the speech that followed.
+        mic.start();
 
         // Must be first: this ack is what stops the glasses showing "service
         // error", and it arms their 8s listening timeout.
@@ -317,7 +347,7 @@ public class AiConversation {
                             + "%d bytes decoded (%dms), peak energy %.0f vs threshold %.0f",
                     mic.packetCount(), mic.rejectedCount(), mic.observedSizes(),
                     decodedBytes,
-                    decodedBytes / 2 * 1000 / OpusStream.SAMPLE_RATE,
+                    decodedBytes / 2 * 1000 / Math.max(1, decoder.sampleRate()),
                     peakEnergy, speechThreshold));
             finish();
             return;
