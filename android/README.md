@@ -76,6 +76,16 @@ that file is deliberately untracked.
 
 Long-press **Clear log** to share the diagnostic log.
 
+### Choosing the AI provider
+
+Settings → **AI provider** picks who answers: **Claude** (the default),
+**ChatGPT** or **Gemini**. Each provider remembers its own API key and model
+name, so switching back later restores what you entered; a blank model field
+uses the shipped default (`claude-haiku-4-5-20251001`, `gpt-4.1-mini`,
+`gemini-2.5-flash`). Provider, key, model and system prompt are re-read at the
+start of every turn, so a change applies to the next question — no reconnect.
+Speech-to-text is always Groq Whisper, whichever provider answers.
+
 ## Gotchas learned the hard way
 
 - **Installing on MIUI:** `adb install` is blocked for new packages

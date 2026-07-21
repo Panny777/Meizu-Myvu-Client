@@ -27,7 +27,7 @@ Each folder has its own README with build/run details:
 - **Teleprompter**, **system settings** (volume, brightness, Wi-Fi, wear detection, zen mode, screen-off, standby position…), **clock sync**, and status **queries**.
 - **Navigation** — full turn-by-turn HUD (OSRM routing, Nominatim geocoding), driven by the phone's location.
 - **Trackpad** — the phone as a remote touchpad for the glasses' launcher (tap / double-tap / long-press / swipe).
-- **AI assistant** — press the glasses' button or type a question; speech-to-text, an LLM answer, and text-to-speech back to the glasses.
+- **AI assistant** — press the glasses' button or type a question; speech-to-text, an LLM answer, and text-to-speech back to the glasses. On Android the answering provider is selectable in Settings — **Claude**, **ChatGPT** or **Gemini**, with an editable model name; the Python client answers via Claude.
 
 ## How it works (short version)
 
