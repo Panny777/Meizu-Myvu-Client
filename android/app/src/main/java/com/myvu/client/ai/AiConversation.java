@@ -87,34 +87,44 @@ public class AiConversation {
     private static final long CAPTION_WORD_MS = 180;
 
     private static final long DUPLICATE_TRIGGER_MS = 1500;
-    private static final int MAX_TURNS = 10;
+    /**
+     * One initial question plus ONE hands-free follow-up, then the conversation
+     * ends cleanly with VR_CLOSE.
+     *
+     * The official app doesn't cap turns -- its cloud NLU does, via an
+     * isNextRecorded flag in each answer that says "expect another turn". We
+     * don't get that field (we call Claude/OpenAI/Gemini directly), and in the
+     * btsnoop the official conversations run only 1-2 turns anyway. Forcing more
+     * than that -- re-arming for a turn the glasses were never told to expect --
+     * is what wedged them on turn 3, after turns 1 and 2 completed cleanly.
+     * Two is the most we can sustain without the cloud's turn-control signal.
+     */
+    private static final int MAX_TURNS = 2;
 
     /**
-     * Hands-free follow-up turns are DISABLED because they wedge the glasses.
+     * Hands-free spoken follow-ups are OFF: every answer ends the conversation
+     * cleanly, and the user presses the AI button again for the next question
+     * (the typed path already works this way and has never wedged).
      *
-     * The second answer of a spoken conversation reliably kills the glasses'
-     * assistant: it renders and is spoken, then the glasses stop streaming
-     * microphone audio entirely (0 packets) and their assistant goes silent at
-     * the application level while the BLE link stays up. Reproduced three times
-     * with a healthy app relay, so it is not the RFCOMM wedging.
+     * This is a deliberate stop, not an unsolved mystery. A btsnoop of the
+     * official app was decoded frame by frame, and our per-turn traffic now
+     * matches it exactly -- codes, payloads and timing:
      *
-     * Ruled out by testing against the decompiled official app, each verified
-     * on hardware and each still crashing:
-     *   - reusing the sessionId across turns (we now mint a fresh one per turn,
-     *     as the official app does)
-     *   - the unanswered audio-focus request, code 300 (VERIFIED: the official
-     *     app never replies to it either)
-     *   - the missing TTS VR-state bracket, 106:3 / 106:4 (now sent, and the
-     *     frame sequence matches the official app's shape)
+     *   4(new sessionId) -> 104,104 -> 101 -> 106:7 -> 102 -> 122,122
+     *     -> 6:play1 -> 6:play2 -> 107 -> (loop), close with 106:0
      *
-     * What would actually settle it is a btsnoop capture of the OFFICIAL app
-     * holding a real multi-turn conversation; everything short of that is
-     * inference from a phone-side APK that cannot show what the glasses'
-     * firmware waits on.
+     * plus the code-2 capability config the official app sends first. With all
+     * that, turns 1 and 2 complete cleanly; the glasses still wedge on turn 3.
      *
-     * Until then every answer ends the conversation cleanly, exactly as a typed
-     * question already does -- that path has never wedged. The user presses the
-     * AI button again for the next question. Flip this to true to re-test.
+     * The real reason we cannot sustain it: the official app does not decide
+     * when to keep listening -- its cloud NLU does, via an isNextRecorded flag in
+     * each answer. We call Claude/OpenAI/Gemini directly and never receive that
+     * flag, so we can only guess, and a forced turn the glasses were never told
+     * to expect is what wedges them. In the whole capture the official app runs
+     * only 1-2 turns per conversation for the same reason.
+     *
+     * Flip to true (and see MAX_TURNS) to re-test if that signal ever becomes
+     * available.
      */
     private static final boolean SPOKEN_FOLLOW_UP_TURNS = false;
 
@@ -318,6 +328,9 @@ public class AiConversation {
         stopRequested = false;
         textMode = false;
         turnCount = 0;
+        // Configure the glasses' assistant (continuous dialogue, ChatGPT card)
+        // before the first frame -- the config is what a follow-up needs.
+        send(AiProtocol.assistantConfig());
         prepareTts();
         startListening(triggerCode == AiProtocol.CODE_START_VR_REQ ? "button" : "wake word");
     }
@@ -472,6 +485,9 @@ public class AiConversation {
             // VR_PROCESSION only AFTER the final caption, or the glasses drop
             // the caption frames entirely.
             send(AiProtocol.vrState(AiProtocol.VR_PROCESSION));
+            // Open the LLM scene EVERY turn. The btsnoop shows the official app
+            // sends 102 on each follow-up too (a fresh 102 per new sessionId),
+            // so gating it to the first turn was wrong.
             send(AiProtocol.chatQuery(sessionId, text));
             askAi(text);
             return;
@@ -534,13 +550,10 @@ public class AiConversation {
 
         send(AiProtocol.chatAnswer(sessionId, answer, 1));
         send(AiProtocol.chatAnswer(sessionId, answer, 2));
-        // Tell the glasses' VR state machine that speech is starting. The
-        // official app brackets every answer with TTS_PLAY_START/TTS_PLAY_END,
-        // and without them the machine never leaves the "answering" state, so
-        // the re-arm for the next turn has nothing to return from and the mic
-        // stops streaming. code 6 below is a RESPONSE to a code-5 play request
-        // we no longer send, so it cannot carry this signal on its own.
-        send(AiProtocol.vrState(AiProtocol.VR_TTS_PLAY_START));
+        // playState:1 = TTS started. A btsnoop of the official app shows it uses
+        // ONLY code 6 for play state here -- it does NOT send the 106 VR TTS
+        // states (3/4) an earlier guess added, and those extra frames were what
+        // wedged the glasses on the follow-up turn.
         send(AiProtocol.playState(AiProtocol.PLAY_STATE_START));
 
         TtsPlayer.Callback callback = new TtsPlayer.Callback() {
@@ -548,8 +561,6 @@ public class AiConversation {
             public void onSpoken(boolean success) {
                 // Gated on the real completion callback, never a timer.
                 send(AiProtocol.playState(AiProtocol.PLAY_STATE_END));
-                // Close the bracket opened above, before the turn is re-armed.
-                send(AiProtocol.vrState(AiProtocol.VR_TTS_PLAY_END));
                 send(AiProtocol.endTurn());
                 if (!success) LogBus.warn("the answer could not be spoken aloud");
                 // Both paths are one-shot while follow-ups are disabled; see
@@ -588,6 +599,7 @@ public class AiConversation {
                 stopRequested = false;
                 textMode = true;
                 turnCount = 0;
+                send(AiProtocol.assistantConfig());
                 prepareTts();
                 sessionId = UUID.randomUUID().toString();
 
@@ -626,21 +638,10 @@ public class AiConversation {
             return;
         }
 
-        // A follow-up is a NEW session as far as the glasses are concerned.
-        //
-        // The official app mints a fresh UUID on every wakeup, including the
-        // automatic re-listen that begins a follow-up, and only reuses the
-        // Session OBJECT (stop then relaunch with the new id). Reusing one
-        // sessionId across turns is a state the glasses are never exposed to in
-        // production, and it crashed them on the second answer: turn 2 re-opened
-        // an already-open LLM scene and committed another answer to a session
-        // that had already been finalised with base_status 2. The glasses drop
-        // any answer whose sessionId does not match the most recent scene-open,
-        // so the id and the scene must be renewed together.
-        sessionId = UUID.randomUUID().toString();
-        // The turn boundary itself is signalled with MULTI_WAKEUP, which the
-        // official app sends after the answer and before listening again.
-        send(AiProtocol.vrState(AiProtocol.VR_MULTI_WAKEUP));
+        // startListening mints a fresh sessionId and sends the code-4 re-arm,
+        // which is exactly how the official app opens each follow-up (verified in
+        // btsnoop: a new sessionId per turn). Nothing else belongs here -- in
+        // particular NOT VR_MULTI_WAKEUP, which the official app never sends.
         startListening("follow-up " + (turnCount + 1));
     }
 

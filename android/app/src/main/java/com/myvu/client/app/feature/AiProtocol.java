@@ -34,6 +34,7 @@ public final class AiProtocol {
     public static final String PKG = AppLayer.PKG_AI;
 
     // ---- codes (CmdCode.java) ----
+    public static final int CODE_ASSISTANT_CONFIG = 2;    // phone -> glasses: capability flags
     public static final int CODE_START_VR_REQ = 3;        // glasses -> phone: button
     public static final int CODE_START_VR_RES = 4;        // phone -> glasses: session ack
     public static final int CODE_TTS_PLAY_RES = 6;        // phone -> glasses: play state
@@ -61,6 +62,34 @@ public final class AiProtocol {
 
     /** The glasses' own listening timeout, armed by code:4. */
     public static final long TIMEOUT_LISTENING_MS = 8000;
+
+    /**
+     * Tells the glasses which assistant capabilities are on -- crucially
+     * isContinuousDialogueEnable (multi-turn) and isChatGptCardDisplayEnable,
+     * without which the glasses' ChatGPT card scene is never configured for
+     * follow-ups and crashes when a second answer is appended.
+     *
+     * Field names and values are taken verbatim from a btsnoop of the official
+     * app, which sends this once and the glasses retain it. We send it at the
+     * start of each conversation, which is harmless to repeat.
+     */
+    public static String assistantConfig() {
+        try {
+            return message(CODE_ASSISTANT_CONFIG, new JSONObject()
+                    .put("hasWakeupVoicePrint", false)
+                    .put("isAsrResultScreenEnable", true)
+                    .put("isChatGptCardDisplayEnable", true)
+                    .put("isChatGptTTSPlayEnable", true)
+                    .put("isContinuousDialogueEnable", true)
+                    .put("isLowPowerWakeupEnable", true)
+                    .put("isLowPowerWakeupScreenOffEnable", true)
+                    .put("isNetworkAvailable", true)
+                    .put("isWakeupVoiceRecording", false)
+                    .put("ttsTimbreValue", 0));
+        } catch (JSONException e) {
+            throw new IllegalStateException(e);
+        }
+    }
 
     private static String message(int code, Object payload) {
         try {
