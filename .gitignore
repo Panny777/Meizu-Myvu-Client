@@ -5,6 +5,7 @@
 **/local.properties
 **/*.keystore
 **/*.jks
+**/keystore.properties
 
 # ---- Android / Gradle build output ----
 android/build/

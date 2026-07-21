@@ -10,8 +10,29 @@ android {
         applicationId 'com.myvu.client'
         minSdk 26
         targetSdk 34
-        versionCode 1
-        versionName '0.1'
+        versionCode 2
+        versionName '0.2'
+    }
+
+    // Release signing lives in android/keystore.properties (untracked, like the
+    // keystore itself -- see .gitignore): storeFile / storePassword / keyAlias /
+    // keyPassword. Without the file, release builds are simply unsigned, so a
+    // fresh clone still builds.
+    def keystoreProps = new Properties()
+    def keystorePropsFile = rootProject.file('keystore.properties')
+    if (keystorePropsFile.exists()) {
+        keystorePropsFile.withInputStream { keystoreProps.load(it) }
+    }
+
+    signingConfigs {
+        release {
+            if (keystorePropsFile.exists()) {
+                storeFile rootProject.file(keystoreProps['storeFile'])
+                storePassword keystoreProps['storePassword']
+                keyAlias keystoreProps['keyAlias']
+                keyPassword keystoreProps['keyPassword']
+            }
+        }
     }
 
     buildTypes {
@@ -19,6 +40,9 @@ android {
             // Keep off: the createBond(int)/hidden-API reflection in service/Bonding
             // breaks silently under R8 without explicit keep rules.
             minifyEnabled false
+            if (keystorePropsFile.exists()) {
+                signingConfig signingConfigs.release
+            }
         }
     }
 

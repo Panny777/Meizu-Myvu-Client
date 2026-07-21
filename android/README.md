@@ -62,6 +62,12 @@ The APK lands in `app/build/outputs/apk/debug/`. Point the SDK location at your
 install via `local.properties` (`sdk.dir=...`) or the `ANDROID_HOME` env var —
 that file is deliberately untracked.
 
+Release builds (`:app:assembleRelease`) are signed only when
+`android/keystore.properties` points at a local keystore (see the comment in
+`app/build.gradle`); both files are untracked secrets, so a fresh clone still
+builds — it just produces an unsigned release APK. Signed APKs are published on
+the GitHub releases page.
+
 ## Running it
 
 1. **Turn off the glasses' other central.** They accept one BLE central at a
