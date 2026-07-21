@@ -289,7 +289,7 @@ public class AiConversation {
         stopRequested = false;
         textMode = false;
         turnCount = 0;
-        tts.init();
+        prepareTts();
         startListening(triggerCode == AiProtocol.CODE_START_VR_REQ ? "button" : "wake word");
     }
 
@@ -371,9 +371,21 @@ public class AiConversation {
     }
 
     private void transcribe(final byte[] pcm, final int sampleRate, final int channels) {
-        final GroqWhisper whisper = new GroqWhisper(Prefs.groqApiKey(context));
-        if (!whisper.hasKey()) {
-            LogBus.warn("no Groq API key set -- speech cannot be transcribed");
+        final SttProvider provider = SttProvider.fromId(Prefs.sttProvider(context));
+        final String apiKey = Prefs.sttApiKey(context, provider.id);
+        if (provider.apiKeyRequired && apiKey.trim().isEmpty()) {
+            LogBus.warn("no " + provider.label + " API key set -- speech cannot be transcribed");
+            finish();
+            return;
+        }
+        String storedModel = Prefs.sttModel(context, provider.id).trim();
+        final String model = storedModel.isEmpty() ? provider.defaultModel : storedModel;
+        String storedEndpoint = Prefs.sttEndpoint(context, provider.id).trim();
+        final String endpoint = storedEndpoint.isEmpty() ? provider.defaultEndpoint : storedEndpoint;
+        final OpenAiTranscriptionClient client = new OpenAiTranscriptionClient(
+                endpoint, model, apiKey, provider.label);
+        if (!client.isConfigured()) {
+            LogBus.warn(provider.label + " is not fully configured");
             finish();
             return;
         }
@@ -382,7 +394,7 @@ public class AiConversation {
             public void run() {
                 final String text;
                 try {
-                    text = whisper.transcribe(pcm, sampleRate, channels);
+                    text = client.transcribe(pcm, sampleRate, channels);
                 } catch (Exception e) {
                     LogBus.error("could not transcribe the glasses audio", e);
                     main.post(new Runnable() {
@@ -457,10 +469,10 @@ public class AiConversation {
         final AiClient client = provider.newClient(
                 Prefs.aiApiKey(context, provider.id),
                 Prefs.aiModel(context, provider.id),
+                Prefs.aiEndpoint(context, provider.id),
                 Prefs.systemPrompt(context));
-        if (!client.hasKey()) {
-            LogBus.warn("no " + provider.label
-                    + " API key set -- add one in the app to get answers");
+        if (!client.isConfigured()) {
+            LogBus.warn(provider.label + " is not fully configured -- check Settings");
             finish();
             return;
         }
@@ -493,7 +505,7 @@ public class AiConversation {
         send(AiProtocol.answerCard(answer));
         send(AiProtocol.playState(AiProtocol.PLAY_STATE_START));
 
-        tts.speak(answer, new TtsPlayer.Callback() {
+        TtsPlayer.Callback callback = new TtsPlayer.Callback() {
             @Override
             public void onSpoken(boolean success) {
                 // Gated on the real completion callback, never a timer.
@@ -503,7 +515,19 @@ public class AiConversation {
                 // A typed question is one-shot; a spoken one keeps listening.
                 if (textMode) finish(); else nextTurn();
             }
-        });
+        };
+        TtsProvider provider = TtsProvider.fromId(Prefs.ttsProvider(context));
+        if (provider == TtsProvider.HTTP) {
+            tts.speakHttp(
+                    answer,
+                    Prefs.ttsEndpoint(context),
+                    Prefs.ttsApiKey(context),
+                    Prefs.ttsModel(context),
+                    Prefs.ttsVoice(context),
+                    callback);
+        } else {
+            tts.speak(answer, callback);
+        }
     }
 
     /**
@@ -523,7 +547,7 @@ public class AiConversation {
                 stopRequested = false;
                 textMode = true;
                 turnCount = 0;
-                tts.init();
+                prepareTts();
                 sessionId = UUID.randomUUID().toString();
 
                 // Bring the glasses' AI page up and show the question as the
@@ -609,6 +633,12 @@ public class AiConversation {
             if (t.equals(phrase)) return true;
         }
         return false;
+    }
+
+    private void prepareTts() {
+        if (TtsProvider.fromId(Prefs.ttsProvider(context)) == TtsProvider.SYSTEM) {
+            tts.init();
+        }
     }
 
     /** All AI messages are sourced from and addressed to the assistant package. */

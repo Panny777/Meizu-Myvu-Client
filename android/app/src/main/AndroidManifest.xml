@@ -57,6 +57,7 @@
     <application
         android:allowBackup="false"
         android:label="MYVU Client"
+        android:usesCleartextTraffic="true"
         android:theme="@style/Theme.Myvu">
         <activity
             android:name=".ui.ConnectActivity"
