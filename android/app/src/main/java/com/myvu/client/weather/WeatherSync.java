@@ -56,9 +56,20 @@ public class WeatherSync {
         this.locationSource = locationSource;
     }
 
-    /** Begins the push-then-refresh cycle. Safe to call repeatedly. */
+    /**
+     * Begins the cycle AND pushes immediately. Safe to call repeatedly.
+     *
+     * It deliberately does not bail out when already running. applyDefaults()
+     * calls this on every connect, including a relay reconnect where the sync
+     * object survives -- and the glasses expect fresh state then, exactly like
+     * the clock and the settings around it. An early return there left them
+     * showing whatever the weather was when the app last started.
+     *
+     * Re-entry is harmless: refresh() has its own in-flight guard, and done()
+     * clears the pending timer before scheduling the next one, so no duplicate
+     * timers accumulate.
+     */
     public void start() {
-        if (running) return;
         running = true;
         refresh();
     }

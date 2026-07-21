@@ -889,7 +889,9 @@ public class ConnectionManager implements BleTransport.Listener, RelaySupervisor
         }
         // Weather is fetched over the network, so it can't be part of the
         // try-block above: a fetch failure must not stop the settings from
-        // being applied. start() is idempotent and self-schedules from here on.
+        // being applied. start() pushes immediately and then self-schedules, so
+        // every connect -- including a relay reconnect -- lands fresh weather,
+        // like the clock and settings above.
         weather().start();
     }
 
@@ -1216,8 +1218,7 @@ public class ConnectionManager implements BleTransport.Listener, RelaySupervisor
         conn.post(new Runnable() {
             @Override
             public void run() {
-                weather().start();   // idempotent; starts the cycle if idle
-                weather().refresh();
+                weather().start();   // starts the cycle if idle, and pushes now
             }
         });
     }
