@@ -101,6 +101,14 @@
                             android:layout_weight="1"
                             android:layout_height="wrap_content"
                             android:text="Gemini" />
+
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/btnProviderLocal"
+                            style="?attr/materialButtonOutlinedStyle"
+                            android:layout_width="0dp"
+                            android:layout_weight="1"
+                            android:layout_height="wrap_content"
+                            android:text="Local" />
                     </com.google.android.material.button.MaterialButtonToggleGroup>
 
                     <!-- Hint and helper are set at runtime for the chosen provider. -->
@@ -132,6 +140,21 @@
                             android:inputType="text"
                             android:importantForAutofill="no" android:maxLines="1" />
                     </com.google.android.material.textfield.TextInputLayout>
+
+                    <com.google.android.material.textfield.TextInputLayout
+                        android:id="@+id/layAiEndpoint"
+                        style="@style/Widget.Material3.TextInputLayout.OutlinedBox"
+                        android:layout_width="match_parent" android:layout_height="wrap_content"
+                        android:layout_marginTop="8dp"
+                        android:hint="Chat Completions endpoint"
+                        app:helperTextEnabled="true"
+                        app:helperText="Full /v1/chat/completions URL; private-LAN HTTP or HTTPS">
+                        <com.google.android.material.textfield.TextInputEditText
+                            android:id="@+id/txtAiEndpoint"
+                            android:layout_width="match_parent" android:layout_height="wrap_content"
+                            android:inputType="textUri"
+                            android:importantForAutofill="no" android:maxLines="1" />
+                    </com.google.android.material.textfield.TextInputLayout>
                 </LinearLayout>
             </com.google.android.material.card.MaterialCardView>
 
@@ -155,18 +178,180 @@
                         android:layout_marginTop="2dp"
                         android:text="Transcribes what you say into the glasses' microphone. Stored on this device only." />
 
+                    <com.google.android.material.button.MaterialButtonToggleGroup
+                        android:id="@+id/btnSttProviderGroup"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="12dp"
+                        app:singleSelection="true"
+                        app:selectionRequired="true">
+
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/btnSttGroq"
+                            style="?attr/materialButtonOutlinedStyle"
+                            android:layout_width="0dp"
+                            android:layout_weight="1"
+                            android:layout_height="wrap_content"
+                            android:text="Groq" />
+
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/btnSttLocal"
+                            style="?attr/materialButtonOutlinedStyle"
+                            android:layout_width="0dp"
+                            android:layout_weight="1"
+                            android:layout_height="wrap_content"
+                            android:text="Local" />
+                    </com.google.android.material.button.MaterialButtonToggleGroup>
+
                     <com.google.android.material.textfield.TextInputLayout
+                        android:id="@+id/laySttApiKey"
                         style="@style/Widget.Material3.TextInputLayout.OutlinedBox"
                         android:layout_width="match_parent" android:layout_height="wrap_content"
-                        android:layout_marginTop="12dp"
-                        android:hint="Groq API key"
+                        android:layout_marginTop="8dp"
+                        android:hint="STT API key"
                         app:helperTextEnabled="true"
-                        app:helperText="Create one at console.groq.com"
                         app:endIconMode="password_toggle">
                         <com.google.android.material.textfield.TextInputEditText
-                            android:id="@+id/txtGroqKey"
+                            android:id="@+id/txtSttApiKey"
                             android:layout_width="match_parent" android:layout_height="wrap_content"
                             android:inputType="textPassword"
+                            android:importantForAutofill="no" android:maxLines="1" />
+                    </com.google.android.material.textfield.TextInputLayout>
+
+                    <com.google.android.material.textfield.TextInputLayout
+                        android:id="@+id/laySttEndpoint"
+                        style="@style/Widget.Material3.TextInputLayout.OutlinedBox"
+                        android:layout_width="match_parent" android:layout_height="wrap_content"
+                        android:layout_marginTop="8dp"
+                        android:hint="Transcriptions endpoint"
+                        app:helperTextEnabled="true"
+                        app:helperText="Full /v1/audio/transcriptions URL">
+                        <com.google.android.material.textfield.TextInputEditText
+                            android:id="@+id/txtSttEndpoint"
+                            android:layout_width="match_parent" android:layout_height="wrap_content"
+                            android:inputType="textUri"
+                            android:importantForAutofill="no" android:maxLines="1" />
+                    </com.google.android.material.textfield.TextInputLayout>
+
+                    <com.google.android.material.textfield.TextInputLayout
+                        android:id="@+id/laySttModel"
+                        style="@style/Widget.Material3.TextInputLayout.OutlinedBox"
+                        android:layout_width="match_parent" android:layout_height="wrap_content"
+                        android:layout_marginTop="8dp"
+                        android:hint="STT model"
+                        app:helperTextEnabled="true">
+                        <com.google.android.material.textfield.TextInputEditText
+                            android:id="@+id/txtSttModel"
+                            android:layout_width="match_parent" android:layout_height="wrap_content"
+                            android:inputType="text"
+                            android:importantForAutofill="no" android:maxLines="1" />
+                    </com.google.android.material.textfield.TextInputLayout>
+                </LinearLayout>
+            </com.google.android.material.card.MaterialCardView>
+
+            <!-- ===== Text to speech ===== -->
+            <com.google.android.material.card.MaterialCardView
+                style="@style/Card.Myvu"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical">
+
+                    <TextView style="@style/CardTitle.Myvu"
+                        android:layout_width="wrap_content" android:layout_height="wrap_content"
+                        android:text="Text to speech" />
+
+                    <TextView style="@style/Label.Myvu"
+                        android:layout_width="match_parent" android:layout_height="wrap_content"
+                        android:layout_marginTop="2dp"
+                        android:text="Speaks answers through Android or an OpenAI-compatible HTTP speech service." />
+
+                    <com.google.android.material.button.MaterialButtonToggleGroup
+                        android:id="@+id/btnTtsProviderGroup"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="12dp"
+                        app:singleSelection="true"
+                        app:selectionRequired="true">
+
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/btnTtsSystem"
+                            style="?attr/materialButtonOutlinedStyle"
+                            android:layout_width="0dp"
+                            android:layout_weight="1"
+                            android:layout_height="wrap_content"
+                            android:text="Device" />
+
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/btnTtsHttp"
+                            style="?attr/materialButtonOutlinedStyle"
+                            android:layout_width="0dp"
+                            android:layout_weight="1"
+                            android:layout_height="wrap_content"
+                            android:text="HTTP API" />
+                    </com.google.android.material.button.MaterialButtonToggleGroup>
+
+                    <com.google.android.material.textfield.TextInputLayout
+                        android:id="@+id/layTtsEndpoint"
+                        style="@style/Widget.Material3.TextInputLayout.OutlinedBox"
+                        android:layout_width="match_parent" android:layout_height="wrap_content"
+                        android:layout_marginTop="8dp"
+                        android:hint="Speech endpoint"
+                        app:helperTextEnabled="true"
+                        app:helperText="Full /v1/audio/speech URL; private-LAN HTTP or HTTPS">
+                        <com.google.android.material.textfield.TextInputEditText
+                            android:id="@+id/txtTtsEndpoint"
+                            android:layout_width="match_parent" android:layout_height="wrap_content"
+                            android:inputType="textUri"
+                            android:importantForAutofill="no" android:maxLines="1" />
+                    </com.google.android.material.textfield.TextInputLayout>
+
+                    <com.google.android.material.textfield.TextInputLayout
+                        android:id="@+id/layTtsApiKey"
+                        style="@style/Widget.Material3.TextInputLayout.OutlinedBox"
+                        android:layout_width="match_parent" android:layout_height="wrap_content"
+                        android:layout_marginTop="8dp"
+                        android:hint="TTS API key"
+                        app:helperTextEnabled="true"
+                        app:helperText="Optional Bearer token"
+                        app:endIconMode="password_toggle">
+                        <com.google.android.material.textfield.TextInputEditText
+                            android:id="@+id/txtTtsApiKey"
+                            android:layout_width="match_parent" android:layout_height="wrap_content"
+                            android:inputType="textPassword"
+                            android:importantForAutofill="no" android:maxLines="1" />
+                    </com.google.android.material.textfield.TextInputLayout>
+
+                    <com.google.android.material.textfield.TextInputLayout
+                        android:id="@+id/layTtsModel"
+                        style="@style/Widget.Material3.TextInputLayout.OutlinedBox"
+                        android:layout_width="match_parent" android:layout_height="wrap_content"
+                        android:layout_marginTop="8dp"
+                        android:hint="TTS model"
+                        app:helperTextEnabled="true"
+                        app:helperText="Optional; omitted when blank">
+                        <com.google.android.material.textfield.TextInputEditText
+                            android:id="@+id/txtTtsModel"
+                            android:layout_width="match_parent" android:layout_height="wrap_content"
+                            android:inputType="text"
+                            android:importantForAutofill="no" android:maxLines="1" />
+                    </com.google.android.material.textfield.TextInputLayout>
+
+                    <com.google.android.material.textfield.TextInputLayout
+                        android:id="@+id/layTtsVoice"
+                        style="@style/Widget.Material3.TextInputLayout.OutlinedBox"
+                        android:layout_width="match_parent" android:layout_height="wrap_content"
+                        android:layout_marginTop="8dp"
+                        android:hint="TTS voice"
+                        app:helperTextEnabled="true"
+                        app:helperText="Optional; omitted when blank">
+                        <com.google.android.material.textfield.TextInputEditText
+                            android:id="@+id/txtTtsVoice"
+                            android:layout_width="match_parent" android:layout_height="wrap_content"
+                            android:inputType="text"
                             android:importantForAutofill="no" android:maxLines="1" />
                     </com.google.android.material.textfield.TextInputLayout>
                 </LinearLayout>

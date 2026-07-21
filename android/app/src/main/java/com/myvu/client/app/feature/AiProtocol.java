@@ -21,7 +21,8 @@ import org.json.JSONObject;
  *     from speech onset, not after speech recognition returns.
  *  3. VR_PROCESSION (106 payload 7) must come AFTER the final caption (101
  *     type:1), never before, or the glasses drop the caption frames.
- *  4. Answers go 5 -> 6 playState:1 -> speak -> 6 playState:2 -> 107.
+ *  4. Open the LLM scene with 102, commit the answer with 122 status 1 then 2,
+ *     and bracket phone-side speech with 6 playState:1 then playState:2.
  *
  * None of these builders declare JSONException: every payload is assembled from
  * literals, so it is unreachable, and declaring it would clutter the call sites
@@ -35,14 +36,15 @@ public final class AiProtocol {
     // ---- codes (CmdCode.java) ----
     public static final int CODE_START_VR_REQ = 3;        // glasses -> phone: button
     public static final int CODE_START_VR_RES = 4;        // phone -> glasses: session ack
-    public static final int CODE_TTS_PLAY_REQ = 5;        // phone -> glasses: answer card
     public static final int CODE_TTS_PLAY_RES = 6;        // phone -> glasses: play state
     public static final int CODE_VOICE_WAKEUP_VR_REQ = 7; // glasses -> phone: wake word
     public static final int CODE_ASR_TRANS = 101;         // phone -> glasses: caption
+    public static final int CODE_VUI = 102;               // phone -> glasses: open LLM scene
     public static final int CODE_VAD_EVENT = 104;         // phone -> glasses: speech bounds
     public static final int CODE_SYNC_VR_STATE = 106;     // phone -> glasses: VrState
     public static final int CODE_HOT_WORD_MANAGER = 107;  // phone -> glasses: end of turn
     public static final int CODE_RECORD_DATA_TRANS = 109; // glasses -> phone: mic audio
+    public static final int CODE_CHAT_GPT_RESPONSE = 122; // phone -> glasses: answer text
 
     // ---- VrState values (protocol/VrState.java) ----
     public static final int VR_CLOSE = 0;
@@ -120,23 +122,44 @@ public final class AiProtocol {
         }
     }
 
-    /** The answer card. Sent before playback begins. */
-    public static String answerCard(String answer) {
+    /** Opens the LLM answer scene for the recognized question. */
+    public static String chatQuery(String sessionId, String query) {
         try {
-            return message(CODE_TTS_PLAY_REQ, new JSONObject()
+            JSONObject emptyUtterance = new JSONObject()
                     .put("id", "")
-                    .put("isContinuous", false)
-                    .put("isMulti", false)
-                    .put("isWakeup", false)
-                    .put("wakeupControl", new JSONObject()
-                            .put("control", 6)
-                            .put("muteTimeout", 2000)
-                            .put("scene", "")
-                            .put("extra", ""))
-                    .put("ttsData", new JSONObject()
-                            .put("text", answer)
-                            .put("isChatGpt", true)
-                            .put("nextStep", 0)));
+                    .put("screen", "")
+                    .put("speech", "");
+            return message(CODE_VUI, new JSONObject()
+                    .put("header", new JSONObject()
+                            .put("name", "default")
+                            .put("namespace", "llm")
+                            .put("specialCmdInChatGptScene", false))
+                    .put("metadata", new JSONObject().put("msgId", ""))
+                    .put("payload", new JSONObject()
+                            .put("isSoundOpened", true)
+                            .put("query", query)
+                            .put("isNextRecorded", false)
+                            .put("utterance", new JSONObject()
+                                    .put("speech", "")
+                                    .put("screen", "")
+                                    .put("id", "")))
+                    .put("source", 0)
+                    .put("utterance", emptyUtterance)
+                    .put("sessionId", sessionId));
+        } catch (JSONException e) {
+            throw new IllegalStateException(e);
+        }
+    }
+
+    /** Commits answer text to the LLM scene; status 1 precedes final status 2. */
+    public static String chatAnswer(String sessionId, String answer, int baseStatus) {
+        try {
+            return message(CODE_CHAT_GPT_RESPONSE, new JSONObject()
+                    .put("answer", answer)
+                    .put("base_status", baseStatus)
+                    .put("isCmd", false)
+                    .put("sessionId", sessionId)
+                    .put("version_code", ""));
         } catch (JSONException e) {
             throw new IllegalStateException(e);
         }

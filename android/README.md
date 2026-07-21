@@ -17,8 +17,8 @@ Package `com.myvu.client`. Java, no Kotlin. `minSdk 26`, tested on API 31.
 - **Notifications** — manual, plus live mirroring of real phone notifications.
 - **Teleprompter, system settings, queries, clock sync.**
 - **Navigation** — OSRM routing + FusedLocation, rendered on the lens HUD.
-- **AI assistant** — glasses mic → Opus decode → Groq Whisper → Claude, ChatGPT
-  or Gemini (pick one in Settings, model editable) → TTS.
+- **AI assistant** — glasses mic → selectable Groq or local STT → Claude,
+  ChatGPT, Gemini, or a local OpenAI-compatible LLM → selectable device or HTTP TTS.
 
 ## Architecture
 
@@ -42,7 +42,7 @@ transport/bt    RFCOMM framing + the per-session-UUID socket
 protocol        TLV, protobuf, relay, session, init burst
 app             StMessage envelope, InboundRouter, feature builders
 service         foreground service, ConnectionManager, RelaySupervisor
-ai              glasses-mic capture, Opus decode, Groq STT, LLM clients, TTS
+ai              glasses-mic capture, Opus decode, STT/LLM/TTS clients
 nav             OSRM, RouteTracker, FusedLocation, HUD frames
 ui              connect screen + live log
 ```
@@ -76,24 +76,46 @@ copy on its current version.
 1. **Turn off the glasses' other central.** They accept one BLE central at a
    time. Force-stop the official app (`com.upuphone.star.launcher.intl`) and
    disconnect any other paired phone, or BLE pairing will be rejected ~1s in.
-2. Enter the glasses' MAC, and (for the AI assistant) a **Groq** API key plus a
-   key for the AI provider of your choice — **Claude**, **ChatGPT** or
-   **Gemini**, selectable in Settings along with the model name. Keys are
-   stored in `SharedPreferences` only — never in source.
+2. Enter the glasses' MAC and configure the assistant services. Cloud providers
+   require their API keys; local OpenAI-compatible services accept a configurable
+   endpoint, model, and optional Bearer token. Settings are stored in
+   `SharedPreferences` only — never in source.
 3. Grant notification access (for mirroring) via the in-app button.
 4. Connect. The link lives in a foreground service and survives backgrounding.
 
 Long-press **Clear log** to share the diagnostic log.
 
-### Choosing the AI provider
+### Configuring assistant services
 
-Settings → **AI provider** picks who answers: **Claude** (the default),
-**ChatGPT** or **Gemini**. Each provider remembers its own API key and model
-name, so switching back later restores what you entered; a blank model field
-uses the shipped default (`claude-haiku-4-5-20251001`, `gpt-4.1-mini`,
-`gemini-2.5-flash`). Provider, key, model and system prompt are re-read at the
-start of every turn, so a change applies to the next question — no reconnect.
-Speech-to-text is always Groq Whisper, whichever provider answers.
+The three stages are selected independently in Settings, so cloud and local
+services can be mixed:
+
+| Stage | Hosted/device choices | Local/API choice | Expected API |
+|---|---|---|---|
+| AI answer | Claude, ChatGPT, Gemini | Local | OpenAI-compatible `POST /v1/chat/completions` |
+| Speech to text | Groq | Local | OpenAI-compatible multipart `POST /v1/audio/transcriptions` |
+| Text to speech | Android device engine | HTTP API | OpenAI-compatible JSON `POST /v1/audio/speech`, returning WAV audio |
+
+Each choice remembers its own settings. Local services accept a full endpoint
+URL and an optional Bearer token. A local AI model ID is required; use an ID
+returned by that server's `GET /v1/models`. The local STT model defaults to
+`whisper`. HTTP TTS model and voice fields are optional and are omitted from the
+request when blank.
+
+For the companion servers in this repository's parent `servers` directory, the
+pre-filled endpoint values are:
+
+```text
+AI:  http://10.0.0.2:1234/v1/chat/completions
+STT: http://10.0.0.2:1235/v1/audio/transcriptions
+TTS: http://10.0.0.2:1236/v1/audio/speech
+```
+
+Change the host or port in Settings when the servers run elsewhere. HTTPS is
+accepted for any host; cleartext HTTP is restricted to literal private-LAN or
+loopback addresses so prompts, microphone audio, and credentials are not sent
+unencrypted to a public host. Provider, endpoint, key, model, voice, and system
+prompt settings are re-read for each turn, so changes do not require a reconnect.
 
 ## Gotchas learned the hard way
 

@@ -43,7 +43,7 @@ public abstract class AiHttpClient implements AiClient {
     }
 
     @Override
-    public boolean hasKey() {
+    public boolean isConfigured() {
         return apiKey != null && !apiKey.trim().isEmpty();
     }
 
@@ -61,9 +61,8 @@ public abstract class AiHttpClient implements AiClient {
 
     @Override
     public String ask(String question) throws IOException {
-        if (!hasKey()) {
-            throw new IOException("no " + provider.label
-                    + " API key set -- add one in the app first");
+        if (!isConfigured()) {
+            throw new IOException(provider.label + " is not fully configured");
         }
 
         String body;
@@ -73,7 +72,17 @@ public abstract class AiHttpClient implements AiClient {
             throw new IOException("could not build the request: " + e.getMessage(), e);
         }
 
-        HttpURLConnection conn = (HttpURLConnection) new URL(endpoint()).openConnection();
+        return HttpRetry.execute(provider.label, new HttpRetry.Request<String>() {
+            @Override
+            public String execute() throws IOException {
+                return askOnce(body);
+            }
+        });
+    }
+
+    private String askOnce(String body) throws IOException {
+        URL url = HttpEndpoint.parse(endpoint(), provider.label + " endpoint");
+        HttpURLConnection conn = (HttpURLConnection) url.openConnection();
         try {
             conn.setRequestMethod("POST");
             conn.setRequestProperty("content-type", "application/json");
@@ -89,8 +98,8 @@ public abstract class AiHttpClient implements AiClient {
             int status = conn.getResponseCode();
             String response = readAll(status >= 400 ? conn.getErrorStream() : conn.getInputStream());
             if (status >= 400) {
-                throw new IOException(provider.label + " API returned " + status + ": "
-                        + extractError(response));
+                throw HttpRetry.statusError(status, provider.label + " API returned " + status
+                        + ": " + extractError(response));
             }
 
             String text;
@@ -109,7 +118,7 @@ public abstract class AiHttpClient implements AiClient {
         }
     }
 
-    /** All three providers put failures under error.message. */
+    /** The supported JSON APIs put failures under error.message. */
     private static String extractError(String response) {
         try {
             JSONObject error = new JSONObject(response).optJSONObject("error");

@@ -24,8 +24,8 @@ public interface AiClient {
             + "markdown, no lists, no code blocks, no emoji. If you do not know "
             + "something, say so briefly rather than guessing.";
 
-    /** False disables answering (e.g. no API key configured). */
-    boolean hasKey();
+    /** False disables answering because required provider settings are missing. */
+    boolean isConfigured();
 
     /** Returns the answer text, or throws with a message worth showing. */
     String ask(String question) throws IOException;

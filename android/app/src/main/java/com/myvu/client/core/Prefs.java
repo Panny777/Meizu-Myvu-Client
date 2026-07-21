@@ -17,12 +17,19 @@ public final class Prefs {
     private static final String KEY_MIRROR_BLOCKED = "mirror_blocked_packages";
     private static final String KEY_MIRROR_ALLOWED = "mirror_allowed_packages";
     private static final String KEY_AI_PROVIDER = "ai_provider";
-    private static final String KEY_GROQ_KEY = "groq_api_key";
+    private static final String KEY_STT_PROVIDER = "stt_provider";
+    private static final String KEY_TTS_PROVIDER = "tts_provider";
     private static final String KEY_SYSTEM_PROMPT = "ai_system_prompt";
     private static final String KEY_WEATHER_ENABLED = "weather_enabled";
     private static final String KEY_WEATHER_PLACE = "weather_place";
 
     public static final String DEFAULT_MAC = "2C:6F:4E:00:DC:47";
+    public static final String DEFAULT_LOCAL_AI_ENDPOINT =
+            "http://10.0.0.2:1234/v1/chat/completions";
+    public static final String DEFAULT_LOCAL_STT_ENDPOINT =
+            "http://10.0.0.2:1235/v1/audio/transcriptions";
+    public static final String DEFAULT_HTTP_TTS_ENDPOINT =
+            "http://10.0.0.2:1236/v1/audio/speech";
 
     /**
      * Packages whose notifications are never mirrored. Ongoing/system chatter
@@ -124,13 +131,90 @@ public final class Prefs {
         prefs(c).edit().putString("ai_model_" + providerId, model).apply();
     }
 
-    /** Speech-to-text for the glasses' microphone stream. Same rule: runtime only. */
-    public static String groqApiKey(Context c) {
-        return prefs(c).getString(KEY_GROQ_KEY, "");
+    public static String aiEndpoint(Context c, String providerId) {
+        String defaultValue = "local".equals(providerId) ? DEFAULT_LOCAL_AI_ENDPOINT : "";
+        return prefs(c).getString("ai_endpoint_" + providerId, defaultValue);
     }
 
-    public static void setGroqApiKey(Context c, String key) {
-        prefs(c).edit().putString(KEY_GROQ_KEY, key).apply();
+    public static void setAiEndpoint(Context c, String providerId, String endpoint) {
+        prefs(c).edit().putString("ai_endpoint_" + providerId, endpoint).apply();
+    }
+
+    public static String sttProvider(Context c) {
+        return prefs(c).getString(KEY_STT_PROVIDER, "groq");
+    }
+
+    public static void setSttProvider(Context c, String providerId) {
+        prefs(c).edit().putString(KEY_STT_PROVIDER, providerId).apply();
+    }
+
+    public static String sttApiKey(Context c, String providerId) {
+        String key = "groq".equals(providerId) ? "groq_api_key"
+                : "stt_" + providerId + "_api_key";
+        return prefs(c).getString(key, "");
+    }
+
+    public static void setSttApiKey(Context c, String providerId, String key) {
+        String prefName = "groq".equals(providerId) ? "groq_api_key"
+                : "stt_" + providerId + "_api_key";
+        prefs(c).edit().putString(prefName, key).apply();
+    }
+
+    public static String sttEndpoint(Context c, String providerId) {
+        String defaultValue = "local".equals(providerId) ? DEFAULT_LOCAL_STT_ENDPOINT : "";
+        return prefs(c).getString("stt_endpoint_" + providerId, defaultValue);
+    }
+
+    public static void setSttEndpoint(Context c, String providerId, String endpoint) {
+        prefs(c).edit().putString("stt_endpoint_" + providerId, endpoint).apply();
+    }
+
+    public static String sttModel(Context c, String providerId) {
+        return prefs(c).getString("stt_model_" + providerId, "");
+    }
+
+    public static void setSttModel(Context c, String providerId, String model) {
+        prefs(c).edit().putString("stt_model_" + providerId, model).apply();
+    }
+
+    public static String ttsProvider(Context c) {
+        return prefs(c).getString(KEY_TTS_PROVIDER, "system");
+    }
+
+    public static void setTtsProvider(Context c, String providerId) {
+        prefs(c).edit().putString(KEY_TTS_PROVIDER, providerId).apply();
+    }
+
+    public static String ttsEndpoint(Context c) {
+        return prefs(c).getString("tts_http_endpoint", DEFAULT_HTTP_TTS_ENDPOINT);
+    }
+
+    public static void setTtsEndpoint(Context c, String endpoint) {
+        prefs(c).edit().putString("tts_http_endpoint", endpoint).apply();
+    }
+
+    public static String ttsApiKey(Context c) {
+        return prefs(c).getString("tts_http_api_key", "");
+    }
+
+    public static void setTtsApiKey(Context c, String key) {
+        prefs(c).edit().putString("tts_http_api_key", key).apply();
+    }
+
+    public static String ttsModel(Context c) {
+        return prefs(c).getString("tts_http_model", "");
+    }
+
+    public static void setTtsModel(Context c, String model) {
+        prefs(c).edit().putString("tts_http_model", model).apply();
+    }
+
+    public static String ttsVoice(Context c) {
+        return prefs(c).getString("tts_http_voice", "");
+    }
+
+    public static void setTtsVoice(Context c, String voice) {
+        prefs(c).edit().putString("tts_http_voice", voice).apply();
     }
 
     /**
