@@ -586,6 +586,22 @@ public class AiConversation {
             finish();
             return;
         }
+
+        // A follow-up is a NEW session as far as the glasses are concerned.
+        //
+        // The official app mints a fresh UUID on every wakeup, including the
+        // automatic re-listen that begins a follow-up, and only reuses the
+        // Session OBJECT (stop then relaunch with the new id). Reusing one
+        // sessionId across turns is a state the glasses are never exposed to in
+        // production, and it crashed them on the second answer: turn 2 re-opened
+        // an already-open LLM scene and committed another answer to a session
+        // that had already been finalised with base_status 2. The glasses drop
+        // any answer whose sessionId does not match the most recent scene-open,
+        // so the id and the scene must be renewed together.
+        sessionId = UUID.randomUUID().toString();
+        // The turn boundary itself is signalled with MULTI_WAKEUP, which the
+        // official app sends after the answer and before listening again.
+        send(AiProtocol.vrState(AiProtocol.VR_MULTI_WAKEUP));
         startListening("follow-up " + (turnCount + 1));
     }
 

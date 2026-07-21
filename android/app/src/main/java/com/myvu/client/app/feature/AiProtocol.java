@@ -48,6 +48,8 @@ public final class AiProtocol {
 
     // ---- VrState values (protocol/VrState.java) ----
     public static final int VR_CLOSE = 0;
+    /** Turn boundary: sent between answers, just before listening again. */
+    public static final int VR_MULTI_WAKEUP = 1;
     public static final int VR_TTS_PLAY_START = 3;
     public static final int VR_TTS_PLAY_END = 4;
     public static final int VR_PROCESSION = 7;
