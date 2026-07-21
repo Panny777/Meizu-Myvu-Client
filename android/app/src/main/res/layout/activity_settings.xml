@@ -50,7 +50,7 @@
             android:layout_height="wrap_content"
             android:orientation="vertical">
 
-            <!-- ===== API keys ===== -->
+            <!-- ===== AI provider ===== -->
             <com.google.android.material.card.MaterialCardView
                 style="@style/Card.Myvu"
                 android:layout_width="match_parent"
@@ -63,20 +63,54 @@
 
                     <TextView style="@style/CardTitle.Myvu"
                         android:layout_width="wrap_content" android:layout_height="wrap_content"
-                        android:text="API keys" />
+                        android:text="AI provider" />
 
                     <TextView style="@style/Label.Myvu"
                         android:layout_width="match_parent" android:layout_height="wrap_content"
                         android:layout_marginTop="2dp"
-                        android:text="Stored on this device only, never in the app's source." />
+                        android:text="Who answers your questions. The key and model are remembered per provider, and stored on this device only — never in the app's source." />
 
+                    <com.google.android.material.button.MaterialButtonToggleGroup
+                        android:id="@+id/btnProviderGroup"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="12dp"
+                        app:singleSelection="true"
+                        app:selectionRequired="true">
+
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/btnProviderClaude"
+                            style="?attr/materialButtonOutlinedStyle"
+                            android:layout_width="0dp"
+                            android:layout_weight="1"
+                            android:layout_height="wrap_content"
+                            android:text="Claude" />
+
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/btnProviderOpenai"
+                            style="?attr/materialButtonOutlinedStyle"
+                            android:layout_width="0dp"
+                            android:layout_weight="1"
+                            android:layout_height="wrap_content"
+                            android:text="ChatGPT" />
+
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/btnProviderGemini"
+                            style="?attr/materialButtonOutlinedStyle"
+                            android:layout_width="0dp"
+                            android:layout_weight="1"
+                            android:layout_height="wrap_content"
+                            android:text="Gemini" />
+                    </com.google.android.material.button.MaterialButtonToggleGroup>
+
+                    <!-- Hint and helper are set at runtime for the chosen provider. -->
                     <com.google.android.material.textfield.TextInputLayout
+                        android:id="@+id/layApiKey"
                         style="@style/Widget.Material3.TextInputLayout.OutlinedBox"
                         android:layout_width="match_parent" android:layout_height="wrap_content"
                         android:layout_marginTop="12dp"
-                        android:hint="Claude API key"
+                        android:hint="API key"
                         app:helperTextEnabled="true"
-                        app:helperText="Used to answer questions"
                         app:endIconMode="password_toggle">
                         <com.google.android.material.textfield.TextInputEditText
                             android:id="@+id/txtApiKey"
@@ -86,12 +120,48 @@
                     </com.google.android.material.textfield.TextInputLayout>
 
                     <com.google.android.material.textfield.TextInputLayout
+                        android:id="@+id/layModel"
                         style="@style/Widget.Material3.TextInputLayout.OutlinedBox"
                         android:layout_width="match_parent" android:layout_height="wrap_content"
                         android:layout_marginTop="8dp"
+                        android:hint="Model"
+                        app:helperTextEnabled="true">
+                        <com.google.android.material.textfield.TextInputEditText
+                            android:id="@+id/txtModel"
+                            android:layout_width="match_parent" android:layout_height="wrap_content"
+                            android:inputType="text"
+                            android:importantForAutofill="no" android:maxLines="1" />
+                    </com.google.android.material.textfield.TextInputLayout>
+                </LinearLayout>
+            </com.google.android.material.card.MaterialCardView>
+
+            <!-- ===== Speech to text ===== -->
+            <com.google.android.material.card.MaterialCardView
+                style="@style/Card.Myvu"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical">
+
+                    <TextView style="@style/CardTitle.Myvu"
+                        android:layout_width="wrap_content" android:layout_height="wrap_content"
+                        android:text="Speech to text" />
+
+                    <TextView style="@style/Label.Myvu"
+                        android:layout_width="match_parent" android:layout_height="wrap_content"
+                        android:layout_marginTop="2dp"
+                        android:text="Transcribes what you say into the glasses' microphone. Stored on this device only." />
+
+                    <com.google.android.material.textfield.TextInputLayout
+                        style="@style/Widget.Material3.TextInputLayout.OutlinedBox"
+                        android:layout_width="match_parent" android:layout_height="wrap_content"
+                        android:layout_marginTop="12dp"
                         android:hint="Groq API key"
                         app:helperTextEnabled="true"
-                        app:helperText="Speech-to-text for the glasses' microphone"
+                        app:helperText="Create one at console.groq.com"
                         app:endIconMode="password_toggle">
                         <com.google.android.material.textfield.TextInputEditText
                             android:id="@+id/txtGroqKey"

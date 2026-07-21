@@ -9,41 +9,79 @@ import android.widget.TextView;
 
 import androidx.appcompat.app.AppCompatActivity;
 
+import com.google.android.material.button.MaterialButtonToggleGroup;
 import com.google.android.material.textfield.TextInputEditText;
+import com.google.android.material.textfield.TextInputLayout;
 import com.myvu.client.R;
-import com.myvu.client.ai.ClaudeClient;
+import com.myvu.client.ai.AiClient;
+import com.myvu.client.ai.AiProvider;
 import com.myvu.client.core.Prefs;
 
 /**
- * App settings: the API keys and the assistant's system prompt.
+ * App settings: the AI provider, its API key and model, and the assistant's
+ * system prompt.
  *
  * Everything here is plain SharedPreferences -- no service binding needed. Each
- * field saves as you type, and both the keys and the prompt are re-read at the
- * start of every AI turn, so edits take effect on the next question without a
- * reconnect or a restart.
+ * field saves as you type, and the provider, keys, model and prompt are all
+ * re-read at the start of every AI turn, so edits take effect on the next
+ * question without a reconnect or a restart.
+ *
+ * The key and model fields are SHARED between providers: picking a provider
+ * loads its own stored key and model into them, so switching back later
+ * remembers what was entered.
  */
 public class SettingsActivity extends AppCompatActivity {
 
-    private TextInputEditText txtApiKey, txtGroqKey, txtSystemPrompt;
+    private TextInputLayout layApiKey, layModel;
+    private TextInputEditText txtApiKey, txtModel, txtGroqKey, txtSystemPrompt;
+
+    /** The provider whose key and model the shared fields are showing. */
+    private AiProvider provider;
+    /** True while fields are loaded programmatically, so the save watchers stay quiet. */
+    private boolean binding;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_settings);
 
+        layApiKey = findViewById(R.id.layApiKey);
+        layModel = findViewById(R.id.layModel);
         txtApiKey = findViewById(R.id.txtApiKey);
+        txtModel = findViewById(R.id.txtModel);
         txtGroqKey = findViewById(R.id.txtGroqKey);
         txtSystemPrompt = findViewById(R.id.txtSystemPrompt);
 
-        txtApiKey.setText(Prefs.claudeApiKey(this));
+        provider = AiProvider.fromId(Prefs.aiProvider(this));
+        MaterialButtonToggleGroup group = findViewById(R.id.btnProviderGroup);
+        group.check(buttonFor(provider));
+        group.addOnButtonCheckedListener(new MaterialButtonToggleGroup.OnButtonCheckedListener() {
+            @Override
+            public void onButtonChecked(MaterialButtonToggleGroup g, int checkedId,
+                                        boolean isChecked) {
+                if (!isChecked) return;
+                provider = providerFor(checkedId);
+                Prefs.setAiProvider(SettingsActivity.this, provider.id);
+                bindProviderFields();
+            }
+        });
+        bindProviderFields();
+
         txtGroqKey.setText(Prefs.groqApiKey(this));
         // An empty stored prompt means "use the shipped default" -- show that
         // default as the actual text so it is editable rather than invisible.
         String stored = Prefs.systemPrompt(this);
-        txtSystemPrompt.setText(stored.isEmpty() ? ClaudeClient.DEFAULT_SYSTEM_PROMPT : stored);
+        txtSystemPrompt.setText(stored.isEmpty() ? AiClient.DEFAULT_SYSTEM_PROMPT : stored);
 
         persist(txtApiKey, new Saver() {
-            @Override public void save(String v) { Prefs.setClaudeApiKey(SettingsActivity.this, v); }
+            @Override public void save(String v) {
+                if (!binding) Prefs.setAiApiKey(SettingsActivity.this, provider.id, v);
+            }
+        });
+        persist(txtModel, new Saver() {
+            @Override public void save(String v) {
+                if (!binding) Prefs.setAiModel(SettingsActivity.this, provider.id, v.trim());
+            }
         });
         persist(txtGroqKey, new Saver() {
             @Override public void save(String v) { Prefs.setGroqApiKey(SettingsActivity.this, v); }
@@ -53,13 +91,13 @@ public class SettingsActivity extends AppCompatActivity {
                 // Storing the default verbatim is the same as storing nothing;
                 // keep it blank so future default changes still reach the user.
                 Prefs.setSystemPrompt(SettingsActivity.this,
-                        v.trim().equals(ClaudeClient.DEFAULT_SYSTEM_PROMPT) ? "" : v);
+                        v.trim().equals(AiClient.DEFAULT_SYSTEM_PROMPT) ? "" : v);
             }
         });
 
         findViewById(R.id.btnResetPrompt).setOnClickListener(new View.OnClickListener() {
             @Override public void onClick(View v) {
-                txtSystemPrompt.setText(ClaudeClient.DEFAULT_SYSTEM_PROMPT);
+                txtSystemPrompt.setText(AiClient.DEFAULT_SYSTEM_PROMPT);
                 Prefs.setSystemPrompt(SettingsActivity.this, "");
             }
         });
@@ -81,6 +119,31 @@ public class SettingsActivity extends AppCompatActivity {
         ((TextView) findViewById(R.id.txtAllowedSummary)).setText(n == 0
                 ? "No apps selected — nothing is mirrored"
                 : n + " app" + (n == 1 ? "" : "s") + " selected");
+    }
+
+    /** Loads the selected provider's key and model into the shared fields. */
+    private void bindProviderFields() {
+        binding = true;
+        layApiKey.setHint(provider.label + " API key");
+        layApiKey.setHelperText("Used to answer questions — create one at " + provider.console);
+        txtApiKey.setText(Prefs.aiApiKey(this, provider.id));
+        layModel.setHelperText("Blank uses " + provider.defaultModel);
+        txtModel.setText(Prefs.aiModel(this, provider.id));
+        binding = false;
+    }
+
+    private static int buttonFor(AiProvider p) {
+        switch (p) {
+            case OPENAI: return R.id.btnProviderOpenai;
+            case GEMINI: return R.id.btnProviderGemini;
+            default:     return R.id.btnProviderClaude;
+        }
+    }
+
+    private static AiProvider providerFor(int buttonId) {
+        if (buttonId == R.id.btnProviderOpenai) return AiProvider.OPENAI;
+        if (buttonId == R.id.btnProviderGemini) return AiProvider.GEMINI;
+        return AiProvider.CLAUDE;
     }
 
     private interface Saver {

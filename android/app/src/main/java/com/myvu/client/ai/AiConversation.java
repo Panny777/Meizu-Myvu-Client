@@ -431,7 +431,7 @@ public class AiConversation {
             // VR_PROCESSION only AFTER the final caption, or the glasses drop
             // the caption frames entirely.
             send(AiProtocol.vrState(AiProtocol.VR_PROCESSION));
-            askClaude(text);
+            askAi(text);
             return;
         }
 
@@ -450,12 +450,17 @@ public class AiConversation {
         }, CAPTION_WORD_MS);
     }
 
-    private void askClaude(final String question) {
-        // Both read fresh per turn, so edits in Settings apply to the next question.
-        final ClaudeClient client = new ClaudeClient(
-                Prefs.claudeApiKey(context), Prefs.systemPrompt(context));
+    private void askAi(final String question) {
+        // Provider, key, model and prompt are all read fresh per turn, so edits
+        // in Settings apply to the next question.
+        final AiProvider provider = AiProvider.fromId(Prefs.aiProvider(context));
+        final AiClient client = provider.newClient(
+                Prefs.aiApiKey(context, provider.id),
+                Prefs.aiModel(context, provider.id),
+                Prefs.systemPrompt(context));
         if (!client.hasKey()) {
-            LogBus.warn("no Claude API key set -- add one in the app to get answers");
+            LogBus.warn("no " + provider.label
+                    + " API key set -- add one in the app to get answers");
             finish();
             return;
         }
@@ -466,7 +471,7 @@ public class AiConversation {
                 try {
                     answer = client.ask(question);
                 } catch (Exception e) {
-                    LogBus.error("Claude request failed", e);
+                    LogBus.error(provider.label + " request failed", e);
                     main.post(new Runnable() {
                         @Override
                         public void run() { finish(); }
@@ -527,7 +532,7 @@ public class AiConversation {
                 send(AiProtocol.asrResult(sessionId, question.trim(), true));
                 send(AiProtocol.vrState(AiProtocol.VR_PROCESSION));
                 LogBus.log("AI (typed): " + question.trim());
-                askClaude(question.trim());
+                askAi(question.trim());
             }
         });
     }

@@ -21,7 +21,7 @@
     <!-- AI assistant: SpeechRecognizer (Phase 8). -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
 
-    <!-- Claude / OSRM / Nominatim. -->
+    <!-- AI providers (Claude / OpenAI / Gemini), Groq STT, OSRM, Nominatim. -->
     <uses-permission android:name="android.permission.INTERNET" />
 
     <!-- The connection lives in a foreground service so it survives backgrounding. -->

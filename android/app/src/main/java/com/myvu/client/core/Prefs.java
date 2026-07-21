@@ -16,7 +16,7 @@ public final class Prefs {
     private static final String KEY_MIRROR_ENABLED = "mirror_notifications";
     private static final String KEY_MIRROR_BLOCKED = "mirror_blocked_packages";
     private static final String KEY_MIRROR_ALLOWED = "mirror_allowed_packages";
-    private static final String KEY_CLAUDE_KEY = "claude_api_key";
+    private static final String KEY_AI_PROVIDER = "ai_provider";
     private static final String KEY_GROQ_KEY = "groq_api_key";
     private static final String KEY_SYSTEM_PROMPT = "ai_system_prompt";
 
@@ -86,13 +86,40 @@ public final class Prefs {
                 && allowedPackages(c).contains(pkg);
     }
 
-    /** Never hard-code this: the key is entered by the user at runtime. */
-    public static String claudeApiKey(Context c) {
-        return prefs(c).getString(KEY_CLAUDE_KEY, "");
+    /**
+     * Which backend answers questions: an {@code AiProvider.id}. The literal
+     * default keeps this class free of a dependency on the ai package --
+     * {@code AiProvider.fromId} falls back to Claude for unknown ids anyway.
+     */
+    public static String aiProvider(Context c) {
+        return prefs(c).getString(KEY_AI_PROVIDER, "claude");
     }
 
-    public static void setClaudeApiKey(Context c, String key) {
-        prefs(c).edit().putString(KEY_CLAUDE_KEY, key).apply();
+    public static void setAiProvider(Context c, String providerId) {
+        prefs(c).edit().putString(KEY_AI_PROVIDER, providerId).apply();
+    }
+
+    /**
+     * Per-provider API key. Never hard-code one: keys are entered by the user
+     * at runtime. The pref name derives from the provider id -- "claude" yields
+     * claude_api_key, the name that predates provider choice, so keys entered
+     * before this setting existed survive.
+     */
+    public static String aiApiKey(Context c, String providerId) {
+        return prefs(c).getString(providerId + "_api_key", "");
+    }
+
+    public static void setAiApiKey(Context c, String providerId, String key) {
+        prefs(c).edit().putString(providerId + "_api_key", key).apply();
+    }
+
+    /** Per-provider model override. Empty means the provider's shipped default. */
+    public static String aiModel(Context c, String providerId) {
+        return prefs(c).getString("ai_model_" + providerId, "");
+    }
+
+    public static void setAiModel(Context c, String providerId, String model) {
+        prefs(c).edit().putString("ai_model_" + providerId, model).apply();
     }
 
     /** Speech-to-text for the glasses' microphone stream. Same rule: runtime only. */

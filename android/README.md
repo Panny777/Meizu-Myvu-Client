@@ -17,7 +17,8 @@ Package `com.myvu.client`. Java, no Kotlin. `minSdk 26`, tested on API 31.
 - **Notifications** — manual, plus live mirroring of real phone notifications.
 - **Teleprompter, system settings, queries, clock sync.**
 - **Navigation** — OSRM routing + FusedLocation, rendered on the lens HUD.
-- **AI assistant** — glasses mic → Opus decode → Groq Whisper → Claude → TTS.
+- **AI assistant** — glasses mic → Opus decode → Groq Whisper → Claude, ChatGPT
+  or Gemini (pick one in Settings, model editable) → TTS.
 
 ## Architecture
 
@@ -41,7 +42,7 @@ transport/bt    RFCOMM framing + the per-session-UUID socket
 protocol        TLV, protobuf, relay, session, init burst
 app             StMessage envelope, InboundRouter, feature builders
 service         foreground service, ConnectionManager, RelaySupervisor
-ai              glasses-mic capture, Opus decode, Groq STT, Claude, TTS
+ai              glasses-mic capture, Opus decode, Groq STT, LLM clients, TTS
 nav             OSRM, RouteTracker, FusedLocation, HUD frames
 ui              connect screen + live log
 ```
@@ -66,8 +67,10 @@ that file is deliberately untracked.
 1. **Turn off the glasses' other central.** They accept one BLE central at a
    time. Force-stop the official app (`com.upuphone.star.launcher.intl`) and
    disconnect any other paired phone, or BLE pairing will be rejected ~1s in.
-2. Enter the glasses' MAC, and (for the AI assistant) a **Claude** and a **Groq**
-   API key. Keys are stored in `SharedPreferences` only — never in source.
+2. Enter the glasses' MAC, and (for the AI assistant) a **Groq** API key plus a
+   key for the AI provider of your choice — **Claude**, **ChatGPT** or
+   **Gemini**, selectable in Settings along with the model name. Keys are
+   stored in `SharedPreferences` only — never in source.
 3. Grant notification access (for mirroring) via the in-app button.
 4. Connect. The link lives in a foreground service and survives backgrounding.
 
