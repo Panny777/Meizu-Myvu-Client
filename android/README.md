@@ -66,7 +66,10 @@ Release builds (`:app:assembleRelease`) are signed only when
 `android/keystore.properties` points at a local keystore (see the comment in
 `app/build.gradle`); both files are untracked secrets, so a fresh clone still
 builds — it just produces an unsigned release APK. Signed APKs are published on
-the GitHub releases page.
+the GitHub releases page. **Keep the keystore and keystore.properties backed
+up outside the repo**: Android only installs an update over an existing app
+when it is signed with the same key, so losing them strands every installed
+copy on its current version.
 
 ## Running it
 
