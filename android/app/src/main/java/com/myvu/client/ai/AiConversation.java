@@ -89,6 +89,35 @@ public class AiConversation {
     private static final long DUPLICATE_TRIGGER_MS = 1500;
     private static final int MAX_TURNS = 10;
 
+    /**
+     * Hands-free follow-up turns are DISABLED because they wedge the glasses.
+     *
+     * The second answer of a spoken conversation reliably kills the glasses'
+     * assistant: it renders and is spoken, then the glasses stop streaming
+     * microphone audio entirely (0 packets) and their assistant goes silent at
+     * the application level while the BLE link stays up. Reproduced three times
+     * with a healthy app relay, so it is not the RFCOMM wedging.
+     *
+     * Ruled out by testing against the decompiled official app, each verified
+     * on hardware and each still crashing:
+     *   - reusing the sessionId across turns (we now mint a fresh one per turn,
+     *     as the official app does)
+     *   - the unanswered audio-focus request, code 300 (VERIFIED: the official
+     *     app never replies to it either)
+     *   - the missing TTS VR-state bracket, 106:3 / 106:4 (now sent, and the
+     *     frame sequence matches the official app's shape)
+     *
+     * What would actually settle it is a btsnoop capture of the OFFICIAL app
+     * holding a real multi-turn conversation; everything short of that is
+     * inference from a phone-side APK that cannot show what the glasses'
+     * firmware waits on.
+     *
+     * Until then every answer ends the conversation cleanly, exactly as a typed
+     * question already does -- that path has never wedged. The user presses the
+     * AI button again for the next question. Flip this to true to re-test.
+     */
+    private static final boolean SPOKEN_FOLLOW_UP_TURNS = false;
+
     private static final String[] STOP_PHRASES = {
             "stop", "goodbye", "good bye", "bye", "exit", "quit",
             "that's all", "thats all", "that is all", "never mind", "nevermind",
@@ -505,6 +534,13 @@ public class AiConversation {
 
         send(AiProtocol.chatAnswer(sessionId, answer, 1));
         send(AiProtocol.chatAnswer(sessionId, answer, 2));
+        // Tell the glasses' VR state machine that speech is starting. The
+        // official app brackets every answer with TTS_PLAY_START/TTS_PLAY_END,
+        // and without them the machine never leaves the "answering" state, so
+        // the re-arm for the next turn has nothing to return from and the mic
+        // stops streaming. code 6 below is a RESPONSE to a code-5 play request
+        // we no longer send, so it cannot carry this signal on its own.
+        send(AiProtocol.vrState(AiProtocol.VR_TTS_PLAY_START));
         send(AiProtocol.playState(AiProtocol.PLAY_STATE_START));
 
         TtsPlayer.Callback callback = new TtsPlayer.Callback() {
@@ -512,10 +548,13 @@ public class AiConversation {
             public void onSpoken(boolean success) {
                 // Gated on the real completion callback, never a timer.
                 send(AiProtocol.playState(AiProtocol.PLAY_STATE_END));
+                // Close the bracket opened above, before the turn is re-armed.
+                send(AiProtocol.vrState(AiProtocol.VR_TTS_PLAY_END));
                 send(AiProtocol.endTurn());
                 if (!success) LogBus.warn("the answer could not be spoken aloud");
-                // A typed question is one-shot; a spoken one keeps listening.
-                if (textMode) finish(); else nextTurn();
+                // Both paths are one-shot while follow-ups are disabled; see
+                // SPOKEN_FOLLOW_UP_TURNS for why.
+                if (textMode || !SPOKEN_FOLLOW_UP_TURNS) finish(); else nextTurn();
             }
         };
         TtsProvider provider = TtsProvider.fromId(Prefs.ttsProvider(context));
