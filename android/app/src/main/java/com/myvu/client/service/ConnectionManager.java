@@ -20,6 +20,7 @@ import com.myvu.client.crypto.StarryCrypto;
 import com.myvu.client.ai.AiConversation;
 import com.myvu.client.nav.FusedLocationSource;
 import com.myvu.client.nav.NavSession;
+import com.myvu.client.weather.WeatherSync;
 import com.myvu.client.core.LogBus;
 import com.myvu.client.protocol.AbilityReply;
 import com.myvu.client.protocol.InitBurst;
@@ -162,6 +163,12 @@ public class ConnectionManager implements BleTransport.Listener, RelaySupervisor
                 // press like the glasses asking for the relay back.
                 if (supervisor != null) supervisor.wake();
                 ai().onTrigger(code);
+            }
+        });
+        inbound.setWeatherRequestListener(new InboundRouter.WeatherRequestListener() {
+            @Override
+            public void onWeatherRequested() {
+                weather().refresh();
             }
         });
     }
@@ -322,6 +329,7 @@ public class ConnectionManager implements BleTransport.Listener, RelaySupervisor
 
     private void teardown() {
         if (scanner != null) scanner.stop();
+        if (weather != null) weather.stop();
         if (nav != null) nav.stop();
         if (ai != null) ai.stop();
         if (supervisor != null) {
@@ -879,6 +887,10 @@ public class ConnectionManager implements BleTransport.Listener, RelaySupervisor
         } catch (Exception e) {
             LogBus.error("could not apply the default settings", e);
         }
+        // Weather is fetched over the network, so it can't be part of the
+        // try-block above: a fetch failure must not stop the settings from
+        // being applied. start() is idempotent and self-schedules from here on.
+        weather().start();
     }
 
     // ------------------------------------------------- classic audio profiles
@@ -1177,6 +1189,38 @@ public class ConnectionManager implements BleTransport.Listener, RelaySupervisor
     }
 
     // ------------------------------------------------------------ navigation
+
+    /** Pushes weather to the glasses on connect, then every 30 minutes. */
+    private WeatherSync weather;
+
+    public WeatherSync weather() {
+        if (weather == null) {
+            weather = new WeatherSync(context, conn, new WeatherSync.Sender() {
+                @Override
+                public void send(String actionJson) {
+                    // Default routing is the launcher, which is where the
+                    // official app sends weather too.
+                    sendActionNow(actionJson);
+                }
+            }, new FusedLocationSource(context));
+        }
+        return weather;
+    }
+
+    /**
+     * Forces a weather push now. Safe to call from any thread -- the lazy
+     * weather() init must stay on the connection thread or two callers could
+     * race and build two syncs.
+     */
+    public void syncWeatherNow() {
+        conn.post(new Runnable() {
+            @Override
+            public void run() {
+                weather().start();   // idempotent; starts the cycle if idle
+                weather().refresh();
+            }
+        });
+    }
 
     /** Lazily created so location services are only touched when nav is used. */
     private NavSession nav;

@@ -172,6 +172,63 @@
                 </LinearLayout>
             </com.google.android.material.card.MaterialCardView>
 
+            <!-- ===== Weather ===== -->
+            <com.google.android.material.card.MaterialCardView
+                style="@style/Card.Myvu"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical">
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:gravity="center_vertical"
+                        android:orientation="horizontal">
+
+                        <TextView style="@style/CardTitle.Myvu"
+                            android:layout_width="0dp" android:layout_weight="1"
+                            android:layout_height="wrap_content"
+                            android:text="Weather" />
+
+                        <com.google.android.material.materialswitch.MaterialSwitch
+                            android:id="@+id/swWeather"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content" />
+                    </LinearLayout>
+
+                    <TextView style="@style/Label.Myvu"
+                        android:layout_width="match_parent" android:layout_height="wrap_content"
+                        android:layout_marginTop="2dp"
+                        android:text="Pushes the temperature and forecast to the glasses on connect, then every 30 minutes. Uses Open-Meteo — no API key needed. Temperatures are Celsius; the glasses' protocol has no imperial option." />
+
+                    <com.google.android.material.textfield.TextInputLayout
+                        style="@style/Widget.Material3.TextInputLayout.OutlinedBox"
+                        android:layout_width="match_parent" android:layout_height="wrap_content"
+                        android:layout_marginTop="12dp"
+                        android:hint="Location"
+                        app:helperTextEnabled="true"
+                        app:helperText="Blank uses your phone's location. Or type a city, or lat,lon">
+                        <com.google.android.material.textfield.TextInputEditText
+                            android:id="@+id/txtWeatherPlace"
+                            android:layout_width="match_parent" android:layout_height="wrap_content"
+                            android:inputType="text"
+                            android:importantForAutofill="no" android:maxLines="1" />
+                    </com.google.android.material.textfield.TextInputLayout>
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnSyncWeather"
+                        style="@style/Widget.Material3.Button.OutlinedButton"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="8dp"
+                        android:text="Sync weather now" />
+                </LinearLayout>
+            </com.google.android.material.card.MaterialCardView>
+
             <!-- ===== Notification mirroring ===== -->
             <com.google.android.material.card.MaterialCardView
                 style="@style/Card.Myvu"

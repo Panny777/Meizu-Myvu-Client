@@ -5,17 +5,22 @@ import android.os.Bundle;
 import android.text.Editable;
 import android.text.TextWatcher;
 import android.view.View;
+import android.widget.CompoundButton;
 import android.widget.TextView;
+import android.widget.Toast;
 
 import androidx.appcompat.app.AppCompatActivity;
 
 import com.google.android.material.button.MaterialButtonToggleGroup;
+import com.google.android.material.materialswitch.MaterialSwitch;
 import com.google.android.material.textfield.TextInputEditText;
 import com.google.android.material.textfield.TextInputLayout;
 import com.myvu.client.R;
 import com.myvu.client.ai.AiClient;
 import com.myvu.client.ai.AiProvider;
 import com.myvu.client.core.Prefs;
+import com.myvu.client.service.ConnectionManager;
+import com.myvu.client.service.MyvuService;
 
 /**
  * App settings: the AI provider, its API key and model, and the assistant's
@@ -101,6 +106,7 @@ public class SettingsActivity extends AppCompatActivity {
                 Prefs.setSystemPrompt(SettingsActivity.this, "");
             }
         });
+        wireWeather();
         findViewById(R.id.btnPickApps).setOnClickListener(new View.OnClickListener() {
             @Override public void onClick(View v) {
                 startActivity(new Intent(SettingsActivity.this, NotificationAppsActivity.class));
@@ -119,6 +125,50 @@ public class SettingsActivity extends AppCompatActivity {
         ((TextView) findViewById(R.id.txtAllowedSummary)).setText(n == 0
                 ? "No apps selected — nothing is mirrored"
                 : n + " app" + (n == 1 ? "" : "s") + " selected");
+    }
+
+    /**
+     * The weather card. Uses MyvuService.activeConnection() rather than binding
+     * the service, the same way MirrorNotificationListener does -- this screen
+     * is otherwise pure SharedPreferences and does not need a binding.
+     */
+    private void wireWeather() {
+        MaterialSwitch sw = findViewById(R.id.swWeather);
+        TextInputEditText place = findViewById(R.id.txtWeatherPlace);
+
+        sw.setChecked(Prefs.weatherEnabled(this));
+        place.setText(Prefs.weatherPlace(this));
+
+        sw.setOnCheckedChangeListener(new CompoundButton.OnCheckedChangeListener() {
+            @Override
+            public void onCheckedChanged(CompoundButton b, boolean checked) {
+                Prefs.setWeatherEnabled(SettingsActivity.this, checked);
+                // Switching off leaves the cycle to lapse on its next tick;
+                // switching on has to restart it, since a disabled refresh()
+                // returns without rescheduling.
+                if (checked) syncWeatherNow(false);
+            }
+        });
+        persist(place, new Saver() {
+            @Override public void save(String v) {
+                Prefs.setWeatherPlace(SettingsActivity.this, v);
+            }
+        });
+        findViewById(R.id.btnSyncWeather).setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View v) { syncWeatherNow(true); }
+        });
+    }
+
+    private void syncWeatherNow(boolean announce) {
+        ConnectionManager c = MyvuService.activeConnection();
+        if (c == null) {
+            if (announce) {
+                Toast.makeText(this, "Connect to the glasses first", Toast.LENGTH_SHORT).show();
+            }
+            return;
+        }
+        c.syncWeatherNow();
+        if (announce) Toast.makeText(this, "Syncing weather…", Toast.LENGTH_SHORT).show();
     }
 
     /** Loads the selected provider's key and model into the shared fields. */

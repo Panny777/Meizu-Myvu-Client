@@ -19,6 +19,8 @@ public final class Prefs {
     private static final String KEY_AI_PROVIDER = "ai_provider";
     private static final String KEY_GROQ_KEY = "groq_api_key";
     private static final String KEY_SYSTEM_PROMPT = "ai_system_prompt";
+    private static final String KEY_WEATHER_ENABLED = "weather_enabled";
+    private static final String KEY_WEATHER_PLACE = "weather_place";
 
     public static final String DEFAULT_MAC = "2C:6F:4E:00:DC:47";
 
@@ -143,5 +145,27 @@ public final class Prefs {
 
     public static void setSystemPrompt(Context c, String prompt) {
         prefs(c).edit().putString(KEY_SYSTEM_PROMPT, prompt).apply();
+    }
+
+    /** Whether to push weather to the glasses. On by default -- it needs no key. */
+    public static boolean weatherEnabled(Context c) {
+        return prefs(c).getBoolean(KEY_WEATHER_ENABLED, true);
+    }
+
+    public static void setWeatherEnabled(Context c, boolean enabled) {
+        prefs(c).edit().putBoolean(KEY_WEATHER_ENABLED, enabled).apply();
+    }
+
+    /**
+     * Optional place to report weather for -- a city name or "lat,lon". Blank
+     * means "use the phone's location", which is the normal case; this exists
+     * for when location permission is denied or a fixed city is preferred.
+     */
+    public static String weatherPlace(Context c) {
+        return prefs(c).getString(KEY_WEATHER_PLACE, "");
+    }
+
+    public static void setWeatherPlace(Context c, String place) {
+        prefs(c).edit().putString(KEY_WEATHER_PLACE, place).apply();
     }
 }
