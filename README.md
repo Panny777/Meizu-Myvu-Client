@@ -28,7 +28,7 @@ Each folder has its own README with build/run details:
 - **Navigation** — full turn-by-turn HUD (OSRM routing, Nominatim geocoding), driven by the phone's location.
 - **Trackpad** — the phone as a remote touchpad for the glasses' launcher (tap / double-tap / long-press / swipe).
 - **AI assistant** — press the glasses' button or type a question; speech-to-text, an LLM answer, and text-to-speech back to the glasses. On Android, STT, the answering provider, and TTS are independently selectable between hosted options and configurable local OpenAI-compatible endpoints; the Python client answers via Claude.
-- **Live captions** (Android) — opens the glasses' own subtitle scene and drives it with Deepgram streaming speech-to-text, so conversation is subtitled onto the lens in real time. A separate protocol from the assistant: `{"msgCmd":N}` messages between a phone-side package and its glasses-side twin, with the mic arriving as raw Opus. The glasses only capture and render; all recognition is phone-side, which is what lets a different provider drop in.
+- **Live captions** (Android) — opens the glasses' own subtitle scene and drives it with Deepgram streaming speech-to-text, so conversation is subtitled onto the lens in real time. Startable from either end: press Start in the app, or open the scene on the glasses and the phone joins it. A separate protocol from the assistant: `{"msgCmd":N}` messages between a phone-side package and its glasses-side twin, with the mic arriving as raw Opus. The glasses only capture and render; all recognition is phone-side, which is what lets a different provider drop in.
 
 ## How it works (short version)
 

@@ -204,6 +204,28 @@ public class TranscribeProtocolTest {
         assertNull(TranscribeProtocol.parse(new byte[0]));
     }
 
+    /**
+     * The launch-app request is how "the user opened it ON the glasses" reaches
+     * us -- but nav, music and the teleprompter send the same request, and
+     * starting a caption session because someone opened the map would be worse
+     * than not having the feature.
+     */
+    @Test
+    public void launchRequestsMapToTheRightPeerAndIgnoreOtherApps() {
+        assertEquals(TranscribeProtocol.Peer.TRANSLATE,
+                TranscribeProtocol.Peer.forLaunchAppId("com.upuphone.star.launcher@"
+                        + "com.upuphone.ar.translation.phone.TranslationService"));
+        assertEquals(TranscribeProtocol.Peer.TRANSCRIBE,
+                TranscribeProtocol.Peer.forLaunchAppId("com.upuphone.star.launcher@"
+                        + "com.upuphone.ar.transcribe.phone.TranscribeService"));
+
+        assertNull(TranscribeProtocol.Peer.forLaunchAppId("com.upuphone.star.launcher@"
+                + "com.upuphone.ar.navi.lite.NaviService"));
+        assertNull(TranscribeProtocol.Peer.forLaunchAppId("com.upuphone.ar.tici"));
+        assertNull(TranscribeProtocol.Peer.forLaunchAppId(""));
+        assertNull(TranscribeProtocol.Peer.forLaunchAppId(null));
+    }
+
     @Test
     public void peerIdsRoundTripAndFallBackToTranslate() {
         assertEquals(TranscribeProtocol.Peer.TRANSCRIBE,

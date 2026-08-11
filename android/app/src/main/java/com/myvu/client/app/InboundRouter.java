@@ -39,9 +39,23 @@ public class InboundRouter {
         void onWeatherRequested();
     }
 
+    /**
+     * Fired after we ack a glasses-side app asking us to launch its phone-side
+     * companion service.
+     *
+     * This is the closest thing to "the user opened an app ON the glasses" that
+     * reaches us: the appId names the phone package the glasses expect to be
+     * running, e.g.
+     * {@code com.upuphone.star.launcher@com.upuphone.ar.translation.phone.TranslationService}.
+     */
+    public interface LaunchRequestListener {
+        void onLaunchRequested(String appId);
+    }
+
     private final Sender sender;
     private AiTriggerListener aiListener;
     private WeatherRequestListener weatherListener;
+    private LaunchRequestListener launchListener;
 
     public InboundRouter(Sender sender) {
         this.sender = sender;
@@ -53,6 +67,10 @@ public class InboundRouter {
 
     public void setWeatherRequestListener(WeatherRequestListener listener) {
         this.weatherListener = listener;
+    }
+
+    public void setLaunchRequestListener(LaunchRequestListener listener) {
+        this.launchListener = listener;
     }
 
     /** Inspects one inbound relay body and answers anything that needs answering. */
@@ -115,6 +133,9 @@ public class InboundRouter {
             // Must go out on the interconnect inner channel, not the launcher.
             sender.send(response.toString(),
                     AppLayer.PKG_INTERCONNECT, AppLayer.PKG_INTERCONNECT);
+            // After the ack, not before: a listener that starts a session will
+            // send to a glasses-side app that is still waiting on this reply.
+            if (launchListener != null) launchListener.onLaunchRequested(appId);
         } catch (JSONException e) {
             LogBus.error("could not build the launch-app ack", e);
         }

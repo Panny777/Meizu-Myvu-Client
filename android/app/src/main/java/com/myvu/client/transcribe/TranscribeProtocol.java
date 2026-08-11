@@ -73,6 +73,22 @@ public final class TranscribeProtocol {
             }
             return TRANSLATE;
         }
+
+        /**
+         * The peer a RunAsOne launch-app request is asking for, or null if the
+         * request is for something else (nav, music, …).
+         *
+         * The appId is {@code <launcher>@<phonePkg>.<ServiceName>}, so matching
+         * on the phone package is exact -- the two captioning packages share no
+         * prefix with each other or with any other app's.
+         */
+        public static Peer forLaunchAppId(String appId) {
+            if (appId == null) return null;
+            for (Peer p : values()) {
+                if (appId.contains(p.phonePkg)) return p;
+            }
+            return null;
+        }
     }
 
     public static final String PKG_LAUNCHER = "com.upuphone.star.launcher";

@@ -173,6 +173,16 @@ public class ConnectionManager implements BleTransport.Listener, RelaySupervisor
                 weather().refresh();
             }
         });
+        // Opening the caption scene ON the glasses reaches us only as a request
+        // to launch its phone-side service. Nav and music use the same request,
+        // so forLaunchAppId returns null for everything that is not captioning.
+        inbound.setLaunchRequestListener(new InboundRouter.LaunchRequestListener() {
+            @Override
+            public void onLaunchRequested(String appId) {
+                TranscribeProtocol.Peer peer = TranscribeProtocol.Peer.forLaunchAppId(appId);
+                if (peer != null) transcribe().onGlassesLaunchRequest(peer);
+            }
+        });
     }
 
     public ConnectionManager(Context context, Listener listener) {

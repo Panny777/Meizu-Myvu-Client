@@ -136,8 +136,11 @@ is exactly why this is implementable: we put Deepgram where the vendor cloud
 was, and the glasses cannot tell.
 
 ```
-phone → launcher   open_app scene        brings the glasses-side app up
+phone → launcher   open_app scene        starts the glasses-side PROCESS
 phone → glasses    52 transState 1       NotStart, then the subtitle config
+glasses → phone    type:11               "launch your companion service"
+phone → glasses    type:12               ack (InboundRouter)
+phone → launcher   open_app scene AGAIN  ← this is what opens the scene's UI
 phone → glasses    52 transState 3       Preparing; the lens shows "connecting"
                    51 recordState 1      recorder INIT
                    60 language set
@@ -146,13 +149,42 @@ phone → glasses    52 transState 3       Preparing; the lens shows "connecting
 phone → glasses    52 transState 4       Running
                    51 recordState 2      START — this is what opens the mic tap
 glasses → phone    {"msgCmd":4} + 240B   one raw 60 ms Opus packet per message
+phone → glasses    52 ext 20             voice detected — unblocks the lens
 phone → glasses    53 caption frames     partials grow, then one final
 phone → glasses    51 recordState 3/4, 52 transState 2, 66   on stop
 ```
 
-`recordState 2` is the message that makes audio start flowing — in the reference
-capture the first Opus packet arrived 180 ms after it, so the recogniser must
-already be connected when it goes out.
+Three of those are load-bearing in ways that are invisible until you hit them:
+
+- **`open_app` is sent twice.** The first starts the process; the scene's UI only
+  opens after the `type:11`/`type:12` launch handshake, so the vendor re-issues
+  it 14 ms after acking. Send it once and you get a scene that runs the recorder
+  and streams audio but never draws — captions arrive and land on a loading
+  screen forever.
+- **`recordState 2` opens the mic tap.** The first Opus packet arrived 180 ms
+  after it, so the recogniser must already be connected when it goes out.
+- **The lens gates its subtitle view on a VAD state the phone must drive**:
+  `extCode 20` when speech starts, `14`/`19`/`15` at 2 s/5 s/5 min of silence.
+  The vendor derives these from its noise-reduction engine; we take them from
+  Deepgram's `SpeechStarted` plus timers. Without them the lens waits for speech
+  that, as far as it knows, never comes.
+
+Captioning **refuses to run on the BLE fallback** and waits for the relay
+instead. A session that starts on BLE and finishes on the relay is split across
+two transports with two independent msgId runs, and the glasses act on only half
+of it.
+
+### Starting it from the glasses
+
+Opening the scene on the lens works too — the phone joins the session rather
+than the other way round. The trigger is the same `type:11` launch request:
+the glasses ask the phone to start the app's companion service, and that request
+naming a captioning package is the only usable "started on the glasses" signal
+we get. (The vendor's own trigger, `msgCmd 1`, is only sent to a phone package
+the interconnect service has registered, which we cannot be.)
+
+In that direction the phone skips both `open_app`s — the scene is already
+opening, and asking the launcher to open it again restarts it underneath.
 
 Configure it in **Settings → Live captions**: a Deepgram API key, model
 (`nova-3`), and language (`en`, or `multi` on nova-3 for mixed speech). The

@@ -162,7 +162,45 @@ public class TranscribeSession {
      *                vendor's short list.
      */
     public void start(final TranscribeProtocol.Peer peer, final String srcLang) {
-        startAt(peer, srcLang, 0);
+        startAt(peer, srcLang, true, 0);
+    }
+
+    /**
+     * The glasses asked the phone to launch a captioning app's companion
+     * service -- i.e. the user opened the scene ON THE GLASSES.
+     *
+     * Two very different meanings depending on where we already are:
+     * <ul>
+     *   <li>{@code PREPARING} -- this is the handshake for a start WE began, so
+     *       it is the cue to re-issue open_app. Doing it here rather than on a
+     *       timer means the second open_app lands right after the ack, exactly
+     *       as the vendor app does it, however slow the link happens to be.</li>
+     *   <li>{@code IDLE} -- the user started it on the glasses. Bring a session
+     *       up for them, WITHOUT open_app: the scene is already opening, and
+     *       asking the launcher to open it again restarts it underneath.</li>
+     * </ul>
+     *
+     * This is the only usable "started on the glasses" signal we get. The
+     * vendor's own trigger is msgCmd 1 (TRANS_CLICK_START), but the glasses
+     * only send that to a phone-side package the interconnect service has
+     * registered -- and we cannot register, because we are not that app.
+     */
+    public void onGlassesLaunchRequest(final TranscribeProtocol.Peer requested) {
+        conn.post(new Runnable() {
+            @Override
+            public void run() {
+                if (state == State.PREPARING) {
+                    // Beat the timer to it; whichever runs first wins and the
+                    // other becomes a no-op.
+                    conn.removeCallbacks(reopenScene);
+                    reopenScene.run();
+                    return;
+                }
+                if (state != State.IDLE) return;
+                LogBus.log("transcribe: started on the glasses (" + requested.glassesPkg + ")");
+                startAt(requested, Prefs.transcribeGlassesLang(context), false, 0);
+            }
+        });
     }
 
     /** How long to wait for the app relay before giving up on a start. */
@@ -170,7 +208,7 @@ public class TranscribeSession {
     private static final long RELAY_WAIT_INTERVAL_MS = 500;
 
     private void startAt(final TranscribeProtocol.Peer peer, final String srcLang,
-                         final int attempt) {
+                         final boolean openTheScene, final int attempt) {
         conn.post(new Runnable() {
             @Override
             public void run() {
@@ -197,7 +235,7 @@ public class TranscribeSession {
                     conn.postDelayed(new Runnable() {
                         @Override
                         public void run() {
-                            startAt(peer, srcLang, attempt + 1);
+                            startAt(peer, srcLang, openTheScene, attempt + 1);
                         }
                     }, RELAY_WAIT_INTERVAL_MS);
                     return;
@@ -214,15 +252,27 @@ public class TranscribeSession {
                 decodeFailures = 0;
                 resultCmd = P2G_REMOTE_RESULT;
 
-                LogBus.log("transcribe: opening " + peer.glassesPkg + " (" + srcLang + ")");
-                status("Opening the caption scene...", true);
+                LogBus.log("transcribe: " + (openTheScene ? "opening " : "joining ")
+                        + peer.glassesPkg + " (" + srcLang + ")");
+                status(openTheScene ? "Opening the caption scene..."
+                                    : "Joining the scene on the glasses...", true);
 
-                // 1. Bring the glasses-side scene up through the launcher.
-                openScene();
-
-                // 2..N. Everything after this addresses the peer, which needs a
-                // moment to exist. The delays mirror the vendor's own pacing.
-                conn.postDelayed(preSession, 250);
+                if (openTheScene) {
+                    // 1. Bring the glasses-side scene up through the launcher.
+                    openScene();
+                    // 2. The NotStart block; the peer needs a moment to exist.
+                    conn.postDelayed(preSession, 250);
+                    // 3. The second open_app. Normally pre-empted by the launch
+                    // handshake arriving; this is the backstop for when the
+                    // glasses do not ask (scene already resident, say).
+                    conn.postDelayed(reopenScene, 450);
+                } else {
+                    // Started on the glasses: the scene is already coming up and
+                    // has just handshaked, so skip both open_apps entirely.
+                    // Asking the launcher to open it again restarts it underneath.
+                    conn.post(preSession);
+                    conn.postDelayed(beginSession, 250);
+                }
             }
         });
     }
@@ -239,7 +289,6 @@ public class TranscribeSession {
             sendToPeer(TranscribeProtocol.transState(STATE_NOT_START, EXT_NONE));
             sendToPeer(TranscribeProtocol.subtitleSetType(Prefs.transcribeSubtitleSet(context)));
             sendToPeer(TranscribeProtocol.transState(STATE_NOT_START, EXT_CONNECT_ON));
-            conn.postDelayed(reopenScene, 200);
         }
     };
 
@@ -254,9 +303,9 @@ public class TranscribeSession {
      * leaves a scene that runs the recorder and streams audio but never draws:
      * captions arrive on msgCmd 53 and land on a loading screen forever.
      *
-     * Timed rather than triggered off the ack because the ack is answered in
-     * InboundRouter, two layers away; the handshake lands ~255ms after the
-     * first open_app here, so this fires comfortably after it.
+     * Normally driven by {@link #onGlassesLaunchRequest} the moment the ack
+     * goes out, matching the vendor's 14ms gap; the 450ms scheduling in
+     * {@code startAt} is only a backstop for when the glasses never ask.
      */
     private final Runnable reopenScene = new Runnable() {
         @Override
@@ -264,6 +313,9 @@ public class TranscribeSession {
             if (state != State.PREPARING) return;
             LogBus.log("transcribe: re-opening the scene after the launch handshake");
             openScene();
+            // Whichever of the two paths got here first owns the schedule; the
+            // other must not queue a second Preparing burst behind it.
+            conn.removeCallbacks(beginSession);
             conn.postDelayed(beginSession, 350);
         }
     };
@@ -424,6 +476,11 @@ public class TranscribeSession {
     /** Every pending timer, dropped together on any path out of a session. */
     private void stopTimers() {
         conn.removeCallbacks(noAudioCheck);
+        // The bring-up steps too: a stop during Preparing would otherwise let a
+        // queued open_app reopen the scene we are in the middle of closing.
+        conn.removeCallbacks(preSession);
+        conn.removeCallbacks(reopenScene);
+        conn.removeCallbacks(beginSession);
         cancelSilenceLadder();
         voiceActive = false;
     }
