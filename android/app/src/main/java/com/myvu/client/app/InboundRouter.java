@@ -4,6 +4,7 @@ import com.myvu.client.app.feature.ClockSync;
 import com.myvu.client.app.feature.Weather;
 import com.myvu.client.core.LogBus;
 
+import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
 
@@ -52,10 +53,25 @@ public class InboundRouter {
         void onLaunchRequested(String appId);
     }
 
+    /**
+     * Fired with the package name of an app the glasses report activity for.
+     *
+     * The glasses stream usage telemetry to the phone as {@code event_tracking}
+     * / {@code sync_glass_event}, and each entry carries the package it belongs
+     * to in {@code _app_model_}. For an app the user opened ON the glasses this
+     * is the only announcement that reaches us at all -- a scene launched from
+     * the glasses' own launcher sends neither a launch request nor its own
+     * start command until it believes a phone-side app is already there.
+     */
+    public interface GlassAppEventListener {
+        void onGlassAppEvent(String packageName, String eventName);
+    }
+
     private final Sender sender;
     private AiTriggerListener aiListener;
     private WeatherRequestListener weatherListener;
     private LaunchRequestListener launchListener;
+    private GlassAppEventListener glassAppListener;
 
     public InboundRouter(Sender sender) {
         this.sender = sender;
@@ -73,6 +89,10 @@ public class InboundRouter {
         this.launchListener = listener;
     }
 
+    public void setGlassAppEventListener(GlassAppEventListener listener) {
+        this.glassAppListener = listener;
+    }
+
     /** Inspects one inbound relay body and answers anything that needs answering. */
     public void handle(String body) {
         for (String candidate : findJsonObjects(body)) {
@@ -86,7 +106,47 @@ public class InboundRouter {
             checkTimeSyncRequest(obj);
             checkWeatherRequest(obj);
             checkAiTrigger(obj);
+            checkGlassAppEvent(obj);
         }
+    }
+
+    /**
+     * Reports the glasses' app-usage telemetry, which is how we learn that the
+     * user opened something ON the lens.
+     *
+     * One entry looks like
+     * <pre>
+     * {"_app_model_":"com.upuphone.ar.translation.glasses",
+     *  "_event_name_":"iot_translator_click", "_event_attr_value_":{"status":1}}
+     * </pre>
+     * Stop and quit events come through the same stream, so they are dropped
+     * here rather than left for each listener to recognise -- "the user opened
+     * X" and "the user left X" arriving on one callback is a trap.
+     */
+    private void checkGlassAppEvent(JSONObject msg) {
+        if (glassAppListener == null) return;
+        if (!"event_tracking".equals(msg.optString("action", ""))) return;
+        JSONObject data = msg.optJSONObject("data");
+        if (data == null || !"sync_glass_event".equals(data.optString("action", ""))) return;
+        JSONArray events = data.optJSONArray("value");
+        if (events == null) return;
+
+        for (int i = 0; i < events.length(); i++) {
+            JSONObject e = events.optJSONObject(i);
+            if (e == null) continue;
+            String pkg = e.optString("_app_model_", "");
+            if (pkg.isEmpty()) continue;
+            String name = e.optString("_event_name_", "");
+            if (isLeavingEvent(name)) continue;
+            LogBus.trace("glass app event: " + pkg + " " + name);
+            glassAppListener.onGlassAppEvent(pkg, name);
+        }
+    }
+
+    /** e.g. iot_app_stop_event, iot_voice_quit. */
+    private static boolean isLeavingEvent(String eventName) {
+        return eventName.contains("stop") || eventName.contains("quit")
+                || eventName.contains("exit") || eventName.contains("end");
     }
 
     /**

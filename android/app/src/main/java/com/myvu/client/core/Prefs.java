@@ -28,7 +28,6 @@ public final class Prefs {
     private static final String KEY_TRANSCRIBE_PEER = "transcribe_peer";
     private static final String KEY_TRANSCRIBE_GLASSES_LANG = "transcribe_glasses_lang";
     private static final String KEY_TRANSCRIBE_SUBTITLE_SET = "transcribe_subtitle_set";
-    private static final String KEY_TRANSCRIBE_SUBTITLE_SIZE = "transcribe_subtitle_size";
 
     public static final String DEFAULT_MAC = "2C:6F:4E:00:DC:47";
     public static final String DEFAULT_LOCAL_AI_ENDPOINT =
@@ -325,15 +324,6 @@ public final class Prefs {
 
     public static void setTranscribeSubtitleSet(Context c, int type) {
         prefs(c).edit().putInt(KEY_TRANSCRIBE_SUBTITLE_SET, type).apply();
-    }
-
-    /** 1 small, 2 middle, 3 big. */
-    public static int transcribeSubtitleSize(Context c) {
-        return prefs(c).getInt(KEY_TRANSCRIBE_SUBTITLE_SIZE, 2);
-    }
-
-    public static void setTranscribeSubtitleSize(Context c, int size) {
-        prefs(c).edit().putInt(KEY_TRANSCRIBE_SUBTITLE_SIZE, size).apply();
     }
 
     private static String nonEmpty(String value, String fallback) {

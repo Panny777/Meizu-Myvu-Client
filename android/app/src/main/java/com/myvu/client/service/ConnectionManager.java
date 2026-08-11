@@ -183,6 +183,15 @@ public class ConnectionManager implements BleTransport.Listener, RelaySupervisor
                 if (peer != null) transcribe().onGlassesLaunchRequest(peer);
             }
         });
+        // The only announcement we get for a scene the user opened ON the
+        // glasses. Everything that is not a captioning package is ignored.
+        inbound.setGlassAppEventListener(new InboundRouter.GlassAppEventListener() {
+            @Override
+            public void onGlassAppEvent(String packageName, String eventName) {
+                TranscribeProtocol.Peer peer = TranscribeProtocol.Peer.forPackage(packageName);
+                if (peer != null) transcribe().onGlassesAppOpened(peer);
+            }
+        });
     }
 
     public ConnectionManager(Context context, Listener listener) {

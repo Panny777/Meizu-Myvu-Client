@@ -5,6 +5,7 @@ import android.os.Handler;
 import android.os.HandlerThread;
 
 import com.myvu.client.ai.OpusDecoderStream;
+import com.myvu.client.app.feature.AiProtocol;
 import com.myvu.client.core.LogBus;
 import com.myvu.client.core.Prefs;
 
@@ -142,14 +143,6 @@ public class TranscribeSession {
         this.listener = l;
     }
 
-    public State state() {
-        return state;
-    }
-
-    public boolean isActive() {
-        return state != State.IDLE;
-    }
-
     // ------------------------------------------------------------- lifecycle
 
     /**
@@ -185,6 +178,42 @@ public class TranscribeSession {
      * only send that to a phone-side package the interconnect service has
      * registered -- and we cannot register, because we are not that app.
      */
+    /**
+     * The glasses reported activity for a captioning app -- the user opened it
+     * on the lens.
+     *
+     * Unlike the other two triggers this one DOES send open_app. A scene opened
+     * from the glasses' own launcher sits on a loading screen waiting for the
+     * phone side, and open_app is what carries the pre-session config it is
+     * waiting for; the vendor's phone service sends it on startup for exactly
+     * this reason. The msgCmd 1 path skips it because there the scene is
+     * already talking to us, and reopening would restart it underneath.
+     *
+     * Ignored for a few seconds after the scene closes: the same telemetry
+     * stream reports the close, and reacting to that would immediately reopen
+     * an app the user just dismissed.
+     */
+    public void onGlassesAppOpened(final TranscribeProtocol.Peer opened) {
+        conn.post(new Runnable() {
+            @Override
+            public void run() {
+                if (state != State.IDLE) return;
+                long sinceClose = System.currentTimeMillis() - lastSceneClosedAt;
+                if (sinceClose < REOPEN_GUARD_MS) {
+                    LogBus.trace("transcribe: ignoring app event " + sinceClose
+                            + "ms after the scene closed");
+                    return;
+                }
+                LogBus.log("transcribe: opened on the glasses (" + opened.glassesPkg + ")");
+                start(opened, Prefs.transcribeGlassesLang(context));
+            }
+        });
+    }
+
+    /** Long enough to cover the close telemetry arriving after msgCmd 7. */
+    private static final long REOPEN_GUARD_MS = 5000;
+    private long lastSceneClosedAt;
+
     public void onGlassesLaunchRequest(final TranscribeProtocol.Peer requested) {
         conn.post(new Runnable() {
             @Override
@@ -260,8 +289,11 @@ public class TranscribeSession {
                 if (openTheScene) {
                     // 1. Bring the glasses-side scene up through the launcher.
                     openScene();
-                    // 2. The NotStart block; the peer needs a moment to exist.
-                    conn.postDelayed(preSession, 250);
+                    // 2. The NotStart block, promptly: the vendor sends it 30ms
+                    // after open_app, and it MUST precede the second open_app.
+                    // Waiting longer let the launch handshake -- which lands at
+                    // ~165ms -- reorder the two.
+                    conn.postDelayed(preSession, 40);
                     // 3. The second open_app. Normally pre-empted by the launch
                     // handshake arriving; this is the backstop for when the
                     // glasses do not ask (scene already resident, say).
@@ -288,6 +320,9 @@ public class TranscribeSession {
             if (state != State.PREPARING) return;
             sendToPeer(TranscribeProtocol.transState(STATE_NOT_START, EXT_NONE));
             sendToPeer(TranscribeProtocol.subtitleSetType(Prefs.transcribeSubtitleSet(context)));
+            // Twice, as the vendor does. Cheap, and the whole point of this
+            // sequence is to differ from a known-good session in nothing.
+            sendToPeer(TranscribeProtocol.transState(STATE_NOT_START, EXT_CONNECT_ON));
             sendToPeer(TranscribeProtocol.transState(STATE_NOT_START, EXT_CONNECT_ON));
         }
     };
@@ -327,6 +362,7 @@ public class TranscribeSession {
             sendToPeer(TranscribeProtocol.startTrans(srcLang, dstLang));
             sendToPeer(TranscribeProtocol.recordState(REC_INIT));
             sendToPeer(TranscribeProtocol.transState(STATE_PREPARING, EXT_NONE));
+            closeAssistant();
             sendToPeer(TranscribeProtocol.languageSet(srcLang, dstLang));
             // The lens now shows "connecting"; it stays there until the
             // recogniser answers, which is exactly the window we need.
@@ -415,9 +451,10 @@ public class TranscribeSession {
         if (state != State.PREPARING) return;
         state = State.RUNNING;
         startDecoder();
-        sendToPeer(TranscribeProtocol.transState(STATE_RUNNING, EXT_NONE));
-        // START is the message that opens the microphone tap.
+        // START first, then the state change -- the order in the vendor's
+        // SUCCESSFUL run. Its one failed attempt had them the other way round.
         sendToPeer(TranscribeProtocol.recordState(REC_START));
+        sendToPeer(TranscribeProtocol.transState(STATE_RUNNING, EXT_NONE));
         sendToPeer(TranscribeProtocol.transState(STATE_RUNNING, EXT_HINT_WAITING));
         sendToPeer(TranscribeProtocol.serverRunning());
         status("Listening", true);
@@ -629,12 +666,15 @@ public class TranscribeSession {
                 // this is just the scene re-announcing itself, so ignore it.
                 LogBus.log("transcribe: glasses asked to start (" + msg.data + ")");
                 if (state == State.IDLE) {
-                    start(TranscribeProtocol.Peer.fromId(Prefs.transcribePeer(context)),
-                            Prefs.transcribeGlassesLang(context));
+                    // The scene is already up, so skip open_app -- same as the
+                    // launch-request path. Its payload names the language the
+                    // user chose ON the glasses, which beats our stored default.
+                    startAt(peerFor(msg.srcPkg), langFrom(msg.data), false, 0);
                 }
                 break;
             case TranscribeProtocol.G2P_EXIT:
                 LogBus.log("transcribe: the user closed the scene");
+                lastSceneClosedAt = System.currentTimeMillis();
                 sendToPeer(TranscribeProtocol.message(TranscribeProtocol.P2G_EXIT_ACK));
                 if (state != State.IDLE) {
                     state = State.STOPPING;
@@ -655,10 +695,38 @@ public class TranscribeSession {
                 LogBus.trace("transcribe: glasses screen state " + msg.data);
                 break;
             default:
-                LogBus.trace("transcribe: unhandled msgCmd " + msg.msgCmd
+                // Deliberately on the visible log, not trace: an unrecognised
+                // command from the scene is exactly the clue worth having when
+                // the lens is doing something we did not expect.
+                LogBus.log("transcribe: unhandled msgCmd " + msg.msgCmd
                         + " data=" + msg.data);
                 break;
         }
+    }
+
+    /** The peer a message came from, falling back to whatever we are driving. */
+    private TranscribeProtocol.Peer peerFor(String srcPkg) {
+        TranscribeProtocol.Peer p = TranscribeProtocol.Peer.forPackage(srcPkg);
+        return p != null ? p : peer;
+    }
+
+    /**
+     * The source language out of a StartTrans payload, or the stored default.
+     *
+     * The glasses send what the user picked in the scene's own language picker,
+     * so honouring it keeps the two ends from disagreeing about what is being
+     * spoken -- and it is the only place that choice is visible to us.
+     */
+    private String langFrom(String startTransJson) {
+        if (startTransJson != null) {
+            try {
+                String src = new org.json.JSONObject(startTransJson).optString("src", "");
+                if (!src.isEmpty()) return src;
+            } catch (Exception ignored) {
+                // Malformed payload: the stored default is a fine answer.
+            }
+        }
+        return Prefs.transcribeGlassesLang(context);
     }
 
     // ----------------------------------------------------------- audio path
@@ -786,6 +854,26 @@ public class TranscribeSession {
     }
 
     // ---------------------------------------------------------------- plumbing
+
+    /**
+     * Dismisses the AI assistant scene, which otherwise owns the lens.
+     *
+     * The caption scene comes up BEHIND the assistant and sits on its loading
+     * screen forever: audio streams, captions arrive on msgCmd 53, and nothing
+     * is ever drawn, because the assistant is what the display is showing. The
+     * giveaway on the glasses is the assistant still prompting "You can say Hey
+     * Aicy" while captioning is supposedly running.
+     *
+     * The vendor does this from
+     * {@code InterConnectHelper.passTranslationState()}, guarded on exactly
+     * {@code transState == 3 && extCode == -1}, and a capture shows the frame
+     * going out 5ms after that state message -- so it is sent from the same
+     * place here rather than at session start.
+     */
+    private void closeAssistant() {
+        sender.send(AiProtocol.vrState(AiProtocol.VR_CLOSE),
+                AiProtocol.PKG, AiProtocol.PKG);
+    }
 
     private void sendToPeer(String json) {
         sender.send(json, peer.glassesPkg, peer.phonePkg);

@@ -226,6 +226,26 @@ public class TranscribeProtocolTest {
         assertNull(TranscribeProtocol.Peer.forLaunchAppId(null));
     }
 
+    /**
+     * Attributing an INBOUND message needs the glasses-side name; the
+     * launch-request form only ever sees the phone-side one, so the two lookups
+     * are not interchangeable.
+     */
+    @Test
+    public void inboundPackagesResolveFromEitherEndOfThePair() {
+        assertEquals(TranscribeProtocol.Peer.TRANSLATE,
+                TranscribeProtocol.Peer.forPackage("com.upuphone.ar.translation.glasses"));
+        assertEquals(TranscribeProtocol.Peer.TRANSCRIBE,
+                TranscribeProtocol.Peer.forPackage("com.upuphone.ar.transcribe.glasses"));
+        assertEquals(TranscribeProtocol.Peer.TRANSLATE,
+                TranscribeProtocol.Peer.forPackage("com.upuphone.ar.translation.phone"));
+        assertNull(TranscribeProtocol.Peer.forPackage("com.upuphone.star.launcher"));
+        assertNull(TranscribeProtocol.Peer.forPackage(null));
+        // The glasses-side name must NOT resolve through the launch form.
+        assertNull(TranscribeProtocol.Peer.forLaunchAppId(
+                "com.upuphone.ar.translation.glasses"));
+    }
+
     @Test
     public void peerIdsRoundTripAndFallBackToTranslate() {
         assertEquals(TranscribeProtocol.Peer.TRANSCRIBE,

@@ -154,13 +154,18 @@ phone → glasses    53 caption frames     partials grow, then one final
 phone → glasses    51 recordState 3/4, 52 transState 2, 66   on stop
 ```
 
-Three of those are load-bearing in ways that are invisible until you hit them:
+Four of those are load-bearing in ways that are invisible until you hit them:
 
-- **`open_app` is sent twice.** The first starts the process; the scene's UI only
-  opens after the `type:11`/`type:12` launch handshake, so the vendor re-issues
-  it 14 ms after acking. Send it once and you get a scene that runs the recorder
-  and streams audio but never draws — captions arrive and land on a loading
-  screen forever.
+- **The AI assistant must be dismissed** with `{"code":106,"payload":0}`
+  (`SYNC_VR_STATE = VR_CLOSE`) on the assistant channel. The assistant owns the
+  lens; without this the caption scene comes up *behind* it and sits on its
+  loading screen forever — streaming audio, receiving captions, drawing
+  nothing. The vendor sends it from `InterConnectHelper.passTranslationState()`
+  guarded on exactly `transState == 3 && extCode == -1`, and a capture shows it
+  going out 5 ms after that state message. The tell on the glasses is the
+  assistant still offering "You can say Hey Aicy" while captioning "runs".
+- **`open_app` is sent twice.** The first starts the process; the second follows
+  the `type:11`/`type:12` launch handshake, 14 ms after the ack.
 - **`recordState 2` opens the mic tap.** The first Opus packet arrived 180 ms
   after it, so the recogniser must already be connected when it goes out.
 - **The lens gates its subtitle view on a VAD state the phone must drive**:
@@ -176,15 +181,28 @@ of it.
 
 ### Starting it from the glasses
 
-Opening the scene on the lens works too — the phone joins the session rather
-than the other way round. The trigger is the same `type:11` launch request:
-the glasses ask the phone to start the app's companion service, and that request
-naming a captioning package is the only usable "started on the glasses" signal
-we get. (The vendor's own trigger, `msgCmd 1`, is only sent to a phone package
-the interconnect service has registered, which we cannot be.)
+Opening the scene on the lens works too — the phone joins rather than the other
+way round. Finding a trigger for this is harder than it sounds, because a
+cold-opened scene tells us **nothing**: it sends neither its own start command
+(`msgCmd 1`) nor a launch request until it already believes a phone-side app is
+there, and the phone will not act until the scene speaks. The vendor escapes
+that loop because the glasses genuinely launch its service. We cannot be
+launched, so we listen for three things instead:
 
-In that direction the phone skips both `open_app`s — the scene is already
-opening, and asking the launcher to open it again restarts it underneath.
+| Signal | When | Sends `open_app`? |
+|---|---|---|
+| `event_tracking` naming a captioning package | the user opened it on the lens | yes |
+| `msgCmd 1` (`TRANS_CLICK_START`) | the scene is already talking to us | no |
+| `type:11` launch request | the scene wants its companion service | no |
+
+The first is the glasses' own usage telemetry — `_app_model_` plus
+`_event_name_`, e.g. `iot_translator_click` — and it is the only announcement a
+cold open produces. It is also the only one that sends `open_app`, because a
+cold-opened scene is waiting for the pre-session config `open_app` carries;
+the other two arrive from a scene already in dialogue with us, where reopening
+would restart it underneath. Leaving events (`iot_app_stop_event`,
+`iot_voice_quit`) travel the same stream and are filtered out, with a 5 s guard
+after `msgCmd 7` so closing the scene cannot immediately reopen it.
 
 Configure it in **Settings → Live captions**: a Deepgram API key, model
 (`nova-3`), and language (`en`, or `multi` on nova-3 for mixed speech). The

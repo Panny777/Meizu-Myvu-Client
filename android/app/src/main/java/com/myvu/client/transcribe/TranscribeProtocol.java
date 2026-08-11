@@ -89,6 +89,20 @@ public final class TranscribeProtocol {
             }
             return null;
         }
+
+        /**
+         * The peer that owns a package name, either end of the pair.
+         *
+         * Used to attribute an INBOUND message, whose source is the glasses-side
+         * package -- the launch-request form above sees the phone-side one.
+         */
+        public static Peer forPackage(String pkg) {
+            if (pkg == null) return null;
+            for (Peer p : values()) {
+                if (pkg.contains(p.glassesPkg) || pkg.contains(p.phonePkg)) return p;
+            }
+            return null;
+        }
     }
 
     public static final String PKG_LAUNCHER = "com.upuphone.star.launcher";
@@ -249,10 +263,6 @@ public final class TranscribeProtocol {
 
     public static String subtitleSetType(int type) {
         return message(P2G_SUBTITLE_SET_TYPE, obj("subtitleSetType", type));
-    }
-
-    public static String subtitleSizeType(int type) {
-        return message(P2G_SUBTITLE_SIZE_TYPE, obj("subtitleSizeType", type));
     }
 
     /** msgCmd 61 -- "start now"; 60 -- "these are the languages". Same payload. */

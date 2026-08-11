@@ -164,4 +164,68 @@ public class InboundRouterTest {
         router.handle("{not valid json}");
         assertTrue(sent.isEmpty());
     }
+
+    // ------------------------------------------------ glasses app telemetry
+
+    /** One sync_glass_event entry, in the shape the glasses actually send. */
+    private static String glassEvent(String pkg, String eventName) {
+        return "{\"action\":\"event_tracking\",\"data\":{\"action\":\"sync_glass_event\","
+                + "\"value\":[{\"_debug_\":false,\"_event_time_\":\"1786475478000\","
+                + "\"_app_model_\":\"" + pkg + "\",\"_event_type_\":\"action_x\","
+                + "\"_event_name_\":\"" + eventName + "\","
+                + "\"_event_attr_value_\":{\"status\":1},"
+                + "\"_iot_device_model_\":\"XGA010C\"}]}}";
+    }
+
+    private List<String> observedApps;
+
+    private void captureGlassAppEvents() {
+        observedApps = new ArrayList<>();
+        router.setGlassAppEventListener(new InboundRouter.GlassAppEventListener() {
+            @Override
+            public void onGlassAppEvent(String packageName, String eventName) {
+                observedApps.add(packageName + "/" + eventName);
+            }
+        });
+    }
+
+    /**
+     * Opening an app ON the glasses reaches us only as usage telemetry -- a
+     * scene launched from the glasses' own launcher sends neither a launch
+     * request nor its own start command until it believes a phone-side app is
+     * already running.
+     */
+    @Test
+    public void reportsAnAppOpenedOnTheGlasses() {
+        captureGlassAppEvents();
+        router.handle("noise" + glassEvent(
+                "com.upuphone.ar.translation.glasses", "iot_translator_click") + "noise");
+        assertEquals(1, observedApps.size());
+        assertEquals("com.upuphone.ar.translation.glasses/iot_translator_click",
+                observedApps.get(0));
+        // Telemetry is an observation, never something we answer.
+        assertTrue(sent.isEmpty());
+    }
+
+    /**
+     * Leaving an app arrives on the same stream. Passing those through would
+     * make a listener reopen whatever the user just closed.
+     */
+    @Test
+    public void ignoresAppStoppedAndVoiceQuitEvents() {
+        captureGlassAppEvents();
+        router.handle(glassEvent("com.upuphone.star.launcher", "iot_app_stop_event"));
+        router.handle(glassEvent("com.upuphone.ai.assistant", "iot_voice_quit"));
+        assertTrue(observedApps.isEmpty());
+    }
+
+    @Test
+    public void ignoresTelemetryWithNoAppModel() {
+        captureGlassAppEvents();
+        router.handle("{\"action\":\"event_tracking\",\"data\":{\"action\":"
+                + "\"sync_glass_event\",\"value\":[{\"_debug_\":false}]}}");
+        // Not telemetry at all.
+        router.handle("{\"action\":\"volume\",\"value\":12}");
+        assertTrue(observedApps.isEmpty());
+    }
 }
