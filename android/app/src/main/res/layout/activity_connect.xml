@@ -300,6 +300,45 @@
                     </LinearLayout>
                 </com.google.android.material.card.MaterialCardView>
 
+                <!-- Live captions -->
+                <com.google.android.material.card.MaterialCardView
+                    style="@style/Card.Myvu"
+                    android:layout_width="match_parent" android:layout_height="wrap_content">
+                    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                        android:orientation="vertical">
+                        <TextView style="@style/CardTitle.Myvu" android:layout_width="wrap_content"
+                            android:layout_height="wrap_content" android:text="Live captions" />
+                        <TextView style="@style/Label.Myvu" android:layout_width="match_parent"
+                            android:layout_height="wrap_content" android:layout_marginTop="2dp"
+                            android:text="Subtitles speech onto the lens, transcribed by Deepgram" />
+
+                        <TextView
+                            android:id="@+id/txtCaptionStatus" style="@style/Label.Myvu"
+                            android:layout_width="match_parent" android:layout_height="wrap_content"
+                            android:layout_marginTop="10dp" android:text="Idle" />
+                        <TextView
+                            android:id="@+id/txtCaption"
+                            android:layout_width="match_parent" android:layout_height="wrap_content"
+                            android:layout_marginTop="6dp" android:minLines="2" android:maxLines="4"
+                            android:textSize="15sp" android:text="" />
+
+                        <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                            android:orientation="horizontal" android:layout_marginTop="8dp">
+                            <com.google.android.material.button.MaterialButton
+                                android:id="@+id/btnCaptionStart"
+                                style="@style/Widget.Material3.Button.TonalButton"
+                                android:layout_width="0dp" android:layout_weight="1"
+                                android:layout_height="wrap_content" android:text="Start" />
+                            <Space android:layout_width="8dp" android:layout_height="1dp" />
+                            <com.google.android.material.button.MaterialButton
+                                android:id="@+id/btnCaptionStop"
+                                style="?attr/materialButtonOutlinedStyle"
+                                android:layout_width="0dp" android:layout_weight="1"
+                                android:layout_height="wrap_content" android:text="Stop" />
+                        </LinearLayout>
+                    </LinearLayout>
+                </com.google.android.material.card.MaterialCardView>
+
                 <!-- Teleprompter -->
                 <com.google.android.material.card.MaterialCardView
                     style="@style/Card.Myvu"

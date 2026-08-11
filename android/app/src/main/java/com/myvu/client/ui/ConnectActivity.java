@@ -39,6 +39,8 @@ import com.myvu.client.service.ConnectionManager;
 import com.myvu.client.service.ConnectionState;
 import com.myvu.client.service.MirrorNotificationListener;
 import com.myvu.client.service.MyvuService;
+import com.myvu.client.transcribe.TranscribeProtocol;
+import com.myvu.client.transcribe.TranscribeSession;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -54,7 +56,7 @@ public class ConnectActivity extends AppCompatActivity implements LogBus.Listene
 
     private TextInputEditText txtMac, txtNotifyTitle, txtNotifyBody, txtAsk,
             txtTici, txtDest;
-    private TextView txtStatus, txtGlasses;
+    private TextView txtStatus, txtGlasses, txtCaption, txtCaptionStatus;
     private View statusDot;
     private View progress;
     private RecyclerView rvLog;
@@ -78,12 +80,38 @@ public class ConnectActivity extends AppCompatActivity implements LogBus.Listene
             service = ((MyvuService.LocalBinder) binder).getService();
             bound = true;
             render(service.connection().state());
+            service.connection().transcribe().setListener(captionListener);
         }
 
         @Override
         public void onServiceDisconnected(ComponentName name) {
             service = null;
             bound = false;
+        }
+    };
+
+    /**
+     * Caption updates arrive on the connection thread, so every touch of a view
+     * has to be posted. Partials land several times a second while someone is
+     * speaking; they only ever replace one TextView, which is cheap enough to do
+     * unthrottled.
+     */
+    private final TranscribeSession.Listener captionListener = new TranscribeSession.Listener() {
+        @Override
+        public void onStatus(final String status, final boolean running) {
+            runOnUiThread(new Runnable() {
+                @Override public void run() {
+                    txtCaptionStatus.setText(status);
+                    if (!running) txtCaption.setText("");
+                }
+            });
+        }
+
+        @Override
+        public void onCaption(final String text, boolean isFinal) {
+            runOnUiThread(new Runnable() {
+                @Override public void run() { txtCaption.setText(text); }
+            });
         }
     };
 
@@ -102,6 +130,8 @@ public class ConnectActivity extends AppCompatActivity implements LogBus.Listene
         txtDest = findViewById(R.id.txtDest);
         txtStatus = findViewById(R.id.txtStatus);
         txtGlasses = findViewById(R.id.txtGlasses);
+        txtCaption = findViewById(R.id.txtCaption);
+        txtCaptionStatus = findViewById(R.id.txtCaptionStatus);
         statusDot = findViewById(R.id.statusDot);
         progress = findViewById(R.id.progress);
         rvLog = findViewById(R.id.rvLog);
@@ -156,9 +186,21 @@ public class ConnectActivity extends AppCompatActivity implements LogBus.Listene
         super.onStop();
         LogBus.removeListener(this);
         if (bound) {
+            // The session outlives this activity (it lives in the service), so
+            // drop the listener rather than the session -- otherwise captions
+            // keep posting into destroyed views.
+            if (service != null) service.connection().transcribe().setListener(null);
             unbindService(serviceConnection);
             bound = false;
         }
+    }
+
+    /** Opens the caption scene on the glasses with the configured settings. */
+    private void startCaptions() {
+        service.connection().transcribe().setListener(captionListener);
+        service.connection().transcribe().start(
+                TranscribeProtocol.Peer.fromId(Prefs.transcribePeer(this)),
+                Prefs.transcribeGlassesLang(this));
     }
 
     // ------------------------------------------------------------- wiring
@@ -243,6 +285,18 @@ public class ConnectActivity extends AppCompatActivity implements LogBus.Listene
                 String t = text(txtTici);
                 service.connection().openTeleprompter(
                         t.isEmpty() ? "Hello from the MYVU client." : t, "Prompter");
+            }
+        });
+
+        findViewById(R.id.btnCaptionStart).setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View v) {
+                if (!need()) return;
+                startCaptions();
+            }
+        });
+        findViewById(R.id.btnCaptionStop).setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View v) {
+                if (need()) service.connection().transcribe().stop();
             }
         });
 

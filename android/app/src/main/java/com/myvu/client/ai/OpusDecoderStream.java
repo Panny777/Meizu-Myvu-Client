@@ -39,6 +39,24 @@ public class OpusDecoderStream {
     private long presentationUs;
     private final ByteArrayOutputStream all = new ByteArrayOutputStream();
 
+    /**
+     * Whether to keep every decoded byte for {@link #allPcm()}.
+     *
+     * On for an assistant turn, which is a few seconds and needs the whole
+     * utterance as one WAV. OFF for live captioning, which streams the PCM
+     * straight out and may run for an hour -- retaining it there grows at
+     * 32 KB/s and is a pure leak.
+     */
+    private final boolean retainDecoded;
+
+    public OpusDecoderStream() {
+        this(true);
+    }
+
+    public OpusDecoderStream(boolean retainDecoded) {
+        this.retainDecoded = retainDecoded;
+    }
+
     public void start() throws Exception {
         stop();
         MediaFormat format = MediaFormat.createAudioFormat(
@@ -115,7 +133,7 @@ public class OpusDecoderStream {
                     if (outIndex == MediaCodec.INFO_TRY_AGAIN_LATER) break;
                     continue;
                 }
-                if (info.size > 0) {
+                if (info.size > 0 && retainDecoded) {
                     ByteBuffer buf = codec.getOutputBuffer(outIndex);
                     byte[] chunk = new byte[info.size];
                     buf.position(info.offset);
@@ -153,7 +171,7 @@ public class OpusDecoderStream {
                 buf.position(info.offset);
                 buf.get(chunk);
                 out.write(chunk, 0, chunk.length);
-                all.write(chunk, 0, chunk.length);
+                if (retainDecoded) all.write(chunk, 0, chunk.length);
             }
             codec.releaseOutputBuffer(outIndex, false);
         }

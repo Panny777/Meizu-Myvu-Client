@@ -48,6 +48,10 @@ public class SettingsActivity extends AppCompatActivity {
     private TextInputEditText txtTtsModel;
     private TextInputEditText txtTtsVoice;
     private TextInputEditText txtSystemPrompt;
+    private TextInputEditText txtDeepgramKey;
+    private TextInputEditText txtDeepgramModel;
+    private TextInputEditText txtDeepgramLanguage;
+    private TextInputEditText txtGlassesLang;
 
     private AiProvider aiProvider;
     private SttProvider sttProvider;
@@ -90,6 +94,10 @@ public class SettingsActivity extends AppCompatActivity {
         txtTtsModel = findViewById(R.id.txtTtsModel);
         txtTtsVoice = findViewById(R.id.txtTtsVoice);
         txtSystemPrompt = findViewById(R.id.txtSystemPrompt);
+        txtDeepgramKey = findViewById(R.id.txtDeepgramKey);
+        txtDeepgramModel = findViewById(R.id.txtDeepgramModel);
+        txtDeepgramLanguage = findViewById(R.id.txtDeepgramLanguage);
+        txtGlassesLang = findViewById(R.id.txtGlassesLang);
     }
 
     private void configureProviderSelectors() {
@@ -138,6 +146,19 @@ public class SettingsActivity extends AppCompatActivity {
                 bindTtsFields();
             }
         });
+
+        MaterialButtonToggleGroup peerGroup = findViewById(R.id.btnCaptionPeerGroup);
+        peerGroup.check("TRANSCRIBE".equals(Prefs.transcribePeer(this))
+                ? R.id.btnPeerTranscribe : R.id.btnPeerTranslate);
+        peerGroup.addOnButtonCheckedListener(new MaterialButtonToggleGroup.OnButtonCheckedListener() {
+            @Override
+            public void onButtonChecked(MaterialButtonToggleGroup group, int checkedId,
+                                        boolean isChecked) {
+                if (!isChecked) return;
+                Prefs.setTranscribePeer(SettingsActivity.this,
+                        checkedId == R.id.btnPeerTranscribe ? "TRANSCRIBE" : "TRANSLATE");
+            }
+        });
     }
 
     private void bindStoredValues() {
@@ -146,6 +167,10 @@ public class SettingsActivity extends AppCompatActivity {
         bindTtsFields();
         String prompt = Prefs.systemPrompt(this);
         txtSystemPrompt.setText(prompt.isEmpty() ? AiClient.DEFAULT_SYSTEM_PROMPT : prompt);
+        txtDeepgramKey.setText(Prefs.deepgramApiKey(this));
+        txtDeepgramModel.setText(Prefs.deepgramModel(this));
+        txtDeepgramLanguage.setText(Prefs.deepgramLanguage(this));
+        txtGlassesLang.setText(Prefs.transcribeGlassesLang(this));
     }
 
     private void configurePersistence() {
@@ -202,6 +227,26 @@ public class SettingsActivity extends AppCompatActivity {
         persist(txtTtsVoice, new Saver() {
             @Override public void save(String value) {
                 if (!bindingTts) Prefs.setTtsVoice(SettingsActivity.this, value.trim());
+            }
+        });
+        persist(txtDeepgramKey, new Saver() {
+            @Override public void save(String value) {
+                Prefs.setDeepgramApiKey(SettingsActivity.this, value.trim());
+            }
+        });
+        persist(txtDeepgramModel, new Saver() {
+            @Override public void save(String value) {
+                Prefs.setDeepgramModel(SettingsActivity.this, value.trim());
+            }
+        });
+        persist(txtDeepgramLanguage, new Saver() {
+            @Override public void save(String value) {
+                Prefs.setDeepgramLanguage(SettingsActivity.this, value.trim());
+            }
+        });
+        persist(txtGlassesLang, new Saver() {
+            @Override public void save(String value) {
+                Prefs.setTranscribeGlassesLang(SettingsActivity.this, value.trim());
             }
         });
         persist(txtSystemPrompt, new Saver() {

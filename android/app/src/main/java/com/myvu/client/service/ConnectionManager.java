@@ -33,6 +33,8 @@ import com.myvu.client.protocol.link.DeviceInfo;
 import com.myvu.client.protocol.link.LinkCommands;
 import com.myvu.client.protocol.link.LinkMessage;
 import com.myvu.client.protocol.link.LinkProtocol;
+import com.myvu.client.transcribe.TranscribeProtocol;
+import com.myvu.client.transcribe.TranscribeSession;
 import com.myvu.client.transport.Transport;
 import com.myvu.client.transport.TransportListener;
 import com.myvu.client.transport.ble.BleMessageChannel;
@@ -332,6 +334,9 @@ public class ConnectionManager implements BleTransport.Listener, RelaySupervisor
         if (weather != null) weather.stop();
         if (nav != null) nav.stop();
         if (ai != null) ai.stop();
+        // Local teardown only: the peer is unreachable, so the usual stop burst
+        // would just log a pile of "no ready session -- action dropped".
+        if (transcribe != null) transcribe.onConnectionLost();
         if (supervisor != null) {
             supervisor.stop();
             supervisor = null;
@@ -771,6 +776,21 @@ public class ConnectionManager implements BleTransport.Listener, RelaySupervisor
                 return;
             }
 
+            // Live captioning is a second, unrelated audio stream: the subtitle
+            // scene pushes ~17 Opus packets a second in {"msgCmd":3|4} messages.
+            // Same reasoning as above -- binary, high rate, must not reach the
+            // log or the JSON scanner.
+            if (TranscribeProtocol.isTranscribeFrame(m.msgBody)) {
+                if (m.needCallback != 0) sendOn(transport, session.seq.ackFrame(m));
+                TranscribeProtocol.Inbound decoded = TranscribeProtocol.parse(m.msgBody);
+                if (decoded != null) {
+                    transcribe().onInbound(decoded);
+                } else {
+                    LogBus.trace("<- undecodable transcribe frame, " + m.msgBody.length + "B");
+                }
+                return;
+            }
+
             String body = new String(m.msgBody, StandardCharsets.UTF_8);
             LogBus.log("<- msgId=" + m.msgId + " " + truncate(body, 200));
             // The glasses re-send indefinitely until acknowledged.
@@ -1188,6 +1208,38 @@ public class ConnectionManager implements BleTransport.Listener, RelaySupervisor
             });
         }
         return ai;
+    }
+
+    // ----------------------------------------------------- live captioning
+
+    /**
+     * Lazily created: it owns a decode thread, so only build it when a caption
+     * session is actually started -- or when the glasses push a caption message
+     * at us, which is how a scene the user opened on the lens gets adopted.
+     */
+    private volatile TranscribeSession transcribe;
+
+    /**
+     * Synchronized because this one has two callers on different threads -- the
+     * UI (Start button, listener binding) and the connection thread (an inbound
+     * caption message) -- and it owns a HandlerThread, so racing here would leak
+     * one and leave half the app talking to a session nobody reads.
+     */
+    public synchronized TranscribeSession transcribe() {
+        if (transcribe == null) {
+            transcribe = new TranscribeSession(context, conn, new TranscribeSession.Sender() {
+                @Override
+                public void send(String actionJson, String targetPkg, String sourcePkg) {
+                    sendAction(actionJson, targetPkg, sourcePkg);
+                }
+
+                @Override
+                public boolean isRelayReady() {
+                    return isRelayConnected();
+                }
+            });
+        }
+        return transcribe;
     }
 
     // ------------------------------------------------------------ navigation

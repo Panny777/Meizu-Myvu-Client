@@ -22,6 +22,13 @@ public final class Prefs {
     private static final String KEY_SYSTEM_PROMPT = "ai_system_prompt";
     private static final String KEY_WEATHER_ENABLED = "weather_enabled";
     private static final String KEY_WEATHER_PLACE = "weather_place";
+    private static final String KEY_DEEPGRAM_KEY = "deepgram_api_key";
+    private static final String KEY_DEEPGRAM_MODEL = "deepgram_model";
+    private static final String KEY_DEEPGRAM_LANGUAGE = "deepgram_language";
+    private static final String KEY_TRANSCRIBE_PEER = "transcribe_peer";
+    private static final String KEY_TRANSCRIBE_GLASSES_LANG = "transcribe_glasses_lang";
+    private static final String KEY_TRANSCRIBE_SUBTITLE_SET = "transcribe_subtitle_set";
+    private static final String KEY_TRANSCRIBE_SUBTITLE_SIZE = "transcribe_subtitle_size";
 
     public static final String DEFAULT_MAC = "2C:6F:4E:00:DC:47";
     public static final String DEFAULT_LOCAL_AI_ENDPOINT =
@@ -251,5 +258,85 @@ public final class Prefs {
 
     public static void setWeatherPlace(Context c, String place) {
         prefs(c).edit().putString(KEY_WEATHER_PLACE, place).apply();
+    }
+
+    // ------------------------------------------------------------ transcribe
+
+    /**
+     * Deepgram key for live captioning. Kept separate from {@link #sttApiKey}:
+     * that one is the assistant's file-at-a-time transcriber, this one is a
+     * streaming socket, and a user may well want different keys (or only one).
+     */
+    public static String deepgramApiKey(Context c) {
+        return prefs(c).getString(KEY_DEEPGRAM_KEY, "");
+    }
+
+    public static void setDeepgramApiKey(Context c, String key) {
+        prefs(c).edit().putString(KEY_DEEPGRAM_KEY, key).apply();
+    }
+
+    public static String deepgramModel(Context c) {
+        return nonEmpty(prefs(c).getString(KEY_DEEPGRAM_MODEL, ""), "nova-3");
+    }
+
+    public static void setDeepgramModel(Context c, String model) {
+        prefs(c).edit().putString(KEY_DEEPGRAM_MODEL, model).apply();
+    }
+
+    /**
+     * Deepgram's language tag -- BCP-47-ish ("en", "en-US", "es"), or "multi"
+     * on nova-3 for code-switching. Independent of the tag sent to the glasses,
+     * which only accept the vendor's short list.
+     */
+    public static String deepgramLanguage(Context c) {
+        return nonEmpty(prefs(c).getString(KEY_DEEPGRAM_LANGUAGE, ""), "en");
+    }
+
+    public static void setDeepgramLanguage(Context c, String language) {
+        prefs(c).edit().putString(KEY_DEEPGRAM_LANGUAGE, language).apply();
+    }
+
+    /**
+     * Which glasses-side captioning app to drive: "TRANSCRIBE" or "TRANSLATE".
+     * Translate is the default because it ships on international firmware,
+     * where the note-taking Transcribe app may not be installed at all.
+     */
+    public static String transcribePeer(Context c) {
+        return prefs(c).getString(KEY_TRANSCRIBE_PEER, "TRANSLATE");
+    }
+
+    public static void setTranscribePeer(Context c, String peer) {
+        prefs(c).edit().putString(KEY_TRANSCRIBE_PEER, peer).apply();
+    }
+
+    /** The language tag the GLASSES are told about: "en", "cn", "cnen", "ja". */
+    public static String transcribeGlassesLang(Context c) {
+        return nonEmpty(prefs(c).getString(KEY_TRANSCRIBE_GLASSES_LANG, ""), "en");
+    }
+
+    public static void setTranscribeGlassesLang(Context c, String lang) {
+        prefs(c).edit().putString(KEY_TRANSCRIBE_GLASSES_LANG, lang).apply();
+    }
+
+    /** See TranscribeProtocol.SUBTITLE_*; 4 is what the vendor app sends. */
+    public static int transcribeSubtitleSet(Context c) {
+        return prefs(c).getInt(KEY_TRANSCRIBE_SUBTITLE_SET, 4);
+    }
+
+    public static void setTranscribeSubtitleSet(Context c, int type) {
+        prefs(c).edit().putInt(KEY_TRANSCRIBE_SUBTITLE_SET, type).apply();
+    }
+
+    /** 1 small, 2 middle, 3 big. */
+    public static int transcribeSubtitleSize(Context c) {
+        return prefs(c).getInt(KEY_TRANSCRIBE_SUBTITLE_SIZE, 2);
+    }
+
+    public static void setTranscribeSubtitleSize(Context c, int size) {
+        prefs(c).edit().putInt(KEY_TRANSCRIBE_SUBTITLE_SIZE, size).apply();
+    }
+
+    private static String nonEmpty(String value, String fallback) {
+        return value == null || value.trim().isEmpty() ? fallback : value.trim();
     }
 }

@@ -19,6 +19,8 @@ Package `com.myvu.client`. Java, no Kotlin. `minSdk 26`, tested on API 31.
 - **Navigation** — OSRM routing + FusedLocation, rendered on the lens HUD.
 - **AI assistant** — glasses mic → selectable Groq or local STT → Claude,
   ChatGPT, Gemini, or a local OpenAI-compatible LLM → selectable device or HTTP TTS.
+- **Live captions** — the glasses' subtitle scene, driven by Deepgram streaming
+  speech-to-text instead of the vendor cloud.
 
 ## Architecture
 
@@ -43,6 +45,7 @@ protocol        TLV, protobuf, relay, session, init burst
 app             StMessage envelope, InboundRouter, feature builders
 service         foreground service, ConnectionManager, RelaySupervisor
 ai              glasses-mic capture, Opus decode, STT/LLM/TTS clients
+transcribe      live-caption protocol, session state, Deepgram streaming STT
 nav             OSRM, RouteTracker, FusedLocation, HUD frames
 ui              connect screen + live log
 ```
@@ -117,6 +120,50 @@ loopback addresses so prompts, microphone audio, and credentials are not sent
 unencrypted to a public host. Provider, endpoint, key, model, voice, and system
 prompt settings are re-read for each turn, so changes do not require a reconnect.
 
+### Live captions
+
+Subtitles whatever the glasses' microphone hears onto the lens, live. This is a
+**separate protocol** from the AI assistant above: the assistant is the shared
+`{"code":N}` channel, captioning is a point-to-point link between a phone-side
+package and its glasses-side twin, e.g. `com.upuphone.ar.translation.phone` ↔
+`com.upuphone.ar.translation.glasses`. Every message is
+`{"msgCmd":<int>,"data":"<escaped json>"}` — `data` is a **string** holding
+escaped JSON, not a nested object; a nested object parses fine and then binds to
+nothing.
+
+The glasses only capture and render. The phone does all the recognition, which
+is exactly why this is implementable: we put Deepgram where the vendor cloud
+was, and the glasses cannot tell.
+
+```
+phone → launcher   open_app scene        brings the glasses-side app up
+phone → glasses    52 transState 1       NotStart, then the subtitle config
+phone → glasses    52 transState 3       Preparing; the lens shows "connecting"
+                   51 recordState 1      recorder INIT
+                   60 language set
+                   52 ext 16             show-waiting spinner
+       ── the Deepgram socket opens here, inside that spinner ──
+phone → glasses    52 transState 4       Running
+                   51 recordState 2      START — this is what opens the mic tap
+glasses → phone    {"msgCmd":4} + 240B   one raw 60 ms Opus packet per message
+phone → glasses    53 caption frames     partials grow, then one final
+phone → glasses    51 recordState 3/4, 52 transState 2, 66   on stop
+```
+
+`recordState 2` is the message that makes audio start flowing — in the reference
+capture the first Opus packet arrived 180 ms after it, so the recogniser must
+already be connected when it goes out.
+
+Configure it in **Settings → Live captions**: a Deepgram API key, model
+(`nova-3`), and language (`en`, or `multi` on nova-3 for mixed speech). The
+"language told to the glasses" is separate and only affects the lens UI — the
+firmware accepts `en`, `cn`, `cnen`, `ja` and nothing else.
+
+**Glasses-side app** picks which scene to open. *Translator* is the default
+because it ships on international firmware and is what the reference capture
+used; *Transcribe* is the note-taking app and may not be installed on every
+build, in which case the launcher silently ignores the request.
+
 ## Gotchas learned the hard way
 
 - **Installing on MIUI:** `adb install` is blocked for new packages
@@ -132,6 +179,14 @@ prompt settings are re-read for each turn, so changes do not require a reconnect
 - **Glasses mic audio (`code:109`):** field 5 is not a raw Opus packet. It is
   `[2-byte big-endian length][Opus frame]` (config 11, SILK wideband 16 kHz).
   Feeding the length prefix to the decoder produces speech-shaped garbage.
+- **Caption audio (`msgCmd:3|4`) is framed differently** from `code:109` on the
+  very same field 5: it *is* a raw Opus packet, 240 bytes, one 60 ms frame, no
+  length prefix. Two audio paths, two framings — do not share the parser.
+- **Opus decodes at 48 kHz internally,** so MediaCodec may hand back 48 kHz PCM
+  whatever OpusHead declares. Streaming that to a socket opened as
+  `sample_rate=16000` does not error; it transcribes chipmunk speech into
+  confident nonsense. `transcribe/PcmConverter` normalises using the decoder's
+  reported rate rather than the assumed one.
 - **Nav routing:** `open_app` goes to the launcher (it opens apps); `navi_info`
   frames go to the nav app. Both are sourced from `com.upuphone.ar.navi.lite`.
   The HUD will not open unless the phone also answers the glasses' launch-app

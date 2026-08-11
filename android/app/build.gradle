@@ -64,6 +64,10 @@ dependencies {
     // Pulled in transitively by Play Services anyway; gives us AppCompatActivity.
     implementation 'androidx.appcompat:appcompat:1.7.0'
     implementation 'com.google.android.material:material:1.12.0'
+    // Live captioning streams audio to Deepgram over a WebSocket, which
+    // HttpURLConnection cannot do. Java-WebSocket is a pure-Java client (~150KB,
+    // no Kotlin runtime), so it costs far less here than pulling in OkHttp.
+    implementation 'org.java-websocket:Java-WebSocket:1.5.7'
 
     testImplementation 'junit:junit:4.13.2'
     // REQUIRED: the org.json in android.jar is a stub that throws
