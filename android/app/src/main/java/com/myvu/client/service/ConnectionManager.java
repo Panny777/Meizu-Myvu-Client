@@ -106,7 +106,9 @@ public class ConnectionManager implements BleTransport.Listener, RelaySupervisor
     private String sppUuid;
     /** True from the moment we open the relay socket until its session is ready. */
     private boolean relayEstablishing;
-    private static final long RELAY_ESTABLISH_TIMEOUT_MS = 15000;
+    private static final long RELAY_CONNECT_TIMEOUT_MS = 15000;
+    private static final long RELAY_HANDSHAKE_TIMEOUT_MS = 15000;
+    private final RelayEstablishDeadline relayDeadline;
 
     private RelaySupervisor supervisor;
 
@@ -179,6 +181,24 @@ public class ConnectionManager implements BleTransport.Listener, RelaySupervisor
         this.connThread = new HandlerThread("myvu-conn");
         this.connThread.start();
         this.conn = new Handler(connThread.getLooper());
+        this.relayDeadline = new RelayEstablishDeadline(new RelayEstablishDeadline.Scheduler() {
+            @Override public void postDelayed(Runnable task, long delayMs) {
+                conn.postDelayed(task, delayMs);
+            }
+            @Override public void removeCallbacks(Runnable task) {
+                conn.removeCallbacks(task);
+            }
+        }, RELAY_CONNECT_TIMEOUT_MS, RELAY_HANDSHAKE_TIMEOUT_MS,
+                new RelayEstablishDeadline.Listener() {
+                    @Override public void onTimeout(Object owner, RelayEstablishDeadline.Phase phase) {
+                        if (owner != rfcomm || !relayEstablishing) return;
+                        LogBus.warn(phase == RelayEstablishDeadline.Phase.CONNECTING
+                                ? "app relay socket did not connect within 15s -- retrying"
+                                : "app relay handshake/init did not finish within 15s of socket connection -- retrying");
+                        closeRelay();
+                        if (supervisor != null) supervisor.onRelayLost();
+                    }
+                });
     }
 
     public Handler connHandler() { return conn; }
@@ -362,7 +382,7 @@ public class ConnectionManager implements BleTransport.Listener, RelaySupervisor
         }
         rfSession = null;
         relayEstablishing = false;
-        conn.removeCallbacks(relayEstablishTimeout);
+        relayDeadline.cancel();
     }
 
     // ------------------------------------------------------------ connect
@@ -622,45 +642,36 @@ public class ConnectionManager implements BleTransport.Listener, RelaySupervisor
         LogBus.log("opening the app relay: RFCOMM -> " + uuid);
         rfSession = new RelaySession();
         rfcomm = new RfcommTransport(device, uuid, relayListener, conn);
+        // Socket connection may consume most of its budget. A successful open
+        // gets a fresh window for authentication and the paced init burst.
+        relayDeadline.start(rfcomm);
         rfcomm.connect();
-
-        // Bound the whole connect+handshake+init-burst window so a stalled
-        // bring-up is retried instead of hanging the relay indefinitely.
-        conn.postDelayed(relayEstablishTimeout, RELAY_ESTABLISH_TIMEOUT_MS);
     }
-
-    private final Runnable relayEstablishTimeout = new Runnable() {
-        @Override
-        public void run() {
-            if (!relayEstablishing) return;
-            relayEstablishing = false;
-            if (rfSession != null && rfSession.ready) return; // finished in time
-            LogBus.warn("app relay did not finish its handshake within "
-                    + (RELAY_ESTABLISH_TIMEOUT_MS / 1000) + "s -- retrying");
-            closeRelay();
-            if (supervisor != null) supervisor.onRelayLost();
-        }
-    };
 
     private void relayEstablished() {
         relayEstablishing = false;
-        conn.removeCallbacks(relayEstablishTimeout);
+        relayDeadline.cancel();
     }
 
     private final TransportListener relayListener = new TransportListener() {
         @Override
         public void onConnected(Transport transport) {
+            if (transport != rfcomm || !relayDeadline.onConnected(transport)) return;
             LogBus.log("app relay connected -- running its own session handshake");
             sendAbility(rfSession, transport);
         }
 
         @Override
         public void onPayload(Transport transport, byte[] payload) {
+            if (transport != rfcomm) return;
             routePayload(payload, rfSession, transport);
         }
 
         @Override
         public void onDisconnected(Transport transport, Throwable cause) {
+            // Closing a previous socket posts a callback asynchronously. It
+            // must not cancel the replacement's deadline or clear its state.
+            if (transport != rfcomm) return;
             relayEstablished();
             if (cause != null) {
                 LogBus.warn("app relay lost: " + cause.getClass().getSimpleName()
@@ -807,13 +818,10 @@ public class ConnectionManager implements BleTransport.Listener, RelaySupervisor
 
     private void scheduleInitMessage(final List<InitBurst.Entry> entries, final int index,
                                      final RelaySession session, final Transport transport) {
-        if (index >= entries.size()) {
-            session.ready = true;
-            LogBus.log("init burst complete -- "
-                    + (transport != null ? "app relay ready" : "BLE session ready"));
-            onSessionReady(transport);
-            return;
-        }
+        // Posted init callbacks may outlive their transport/session. They must
+        // neither declare a replacement ready nor replenish its retry budget.
+        if (transport != null ? transport != rfcomm || session != rfSession
+                : session != bleSession) return;
         if (!isUsable(transport)) {
             LogBus.warn("link dropped during the init burst at message " + index
                     + " -- session left incomplete");
@@ -827,6 +835,14 @@ public class ConnectionManager implements BleTransport.Listener, RelaySupervisor
             } else {
                 fail("BLE init burst did not complete");
             }
+            return;
+        }
+
+        if (index >= entries.size()) {
+            session.ready = true;
+            LogBus.log("init burst complete -- "
+                    + (transport != null ? "app relay ready" : "BLE session ready"));
+            onSessionReady(transport);
             return;
         }
 
