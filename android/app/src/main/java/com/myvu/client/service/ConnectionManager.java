@@ -39,13 +39,13 @@ import com.myvu.client.transport.ble.BleMessageChannel;
 import com.myvu.client.transport.ble.BlePackets;
 import com.myvu.client.transport.ble.BlePairing;
 import com.myvu.client.transport.ble.GlassesScanner;
+import com.myvu.client.transport.ble.GlassesAdvertisement;
 import com.myvu.client.transport.ble.BleTransport;
 import com.myvu.client.transport.bt.RfcommTransport;
 
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
-import java.util.Locale;
 import java.util.UUID;
 
 /**
@@ -208,7 +208,7 @@ public class ConnectionManager implements BleTransport.Listener, RelaySupervisor
     /**
      * The "auto search" connect path: scan for a MYVU device over BLE, then
      * connect to whatever we find -- so the user doesn't have to know the MAC.
-     * Falls back to a bonded MYVU device if none is advertising (they may be
+     * Falls back to a bonded MYVU or IMIKI device if none is advertising (they may be
      * bonded but asleep; the page attempt will wake or fail cleanly).
      */
     public void startAutoSearch() {
@@ -294,7 +294,7 @@ public class ConnectionManager implements BleTransport.Listener, RelaySupervisor
         try {
             for (BluetoothDevice d : adapter.getBondedDevices()) {
                 String n = d.getName();
-                if (n != null && n.toUpperCase(Locale.US).contains("MYVU")) return d;
+                if (GlassesAdvertisement.matchesName(n)) return d;
             }
         } catch (SecurityException ignored) {
         }

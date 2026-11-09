@@ -23,7 +23,9 @@ public final class Prefs {
     private static final String KEY_WEATHER_ENABLED = "weather_enabled";
     private static final String KEY_WEATHER_PLACE = "weather_place";
 
-    public static final String DEFAULT_MAC = "2C:6F:4E:00:DC:47";
+    // An empty field selects discovery. A developer's sample device address
+    // would otherwise bypass scanning and time out for every new installation.
+    public static final String DEFAULT_MAC = "";
     public static final String DEFAULT_LOCAL_AI_ENDPOINT =
             "http://10.0.0.2:1234/v1/chat/completions";
     public static final String DEFAULT_LOCAL_STT_ENDPOINT =
