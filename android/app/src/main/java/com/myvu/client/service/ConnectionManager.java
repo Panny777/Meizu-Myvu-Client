@@ -849,7 +849,7 @@ public class ConnectionManager implements BleTransport.Listener, RelaySupervisor
 
         // Apply defaults only on the transport that will actually carry app
         // traffic. BLE goes ready first and the relay takes over seconds later,
-        // so applying on both sent all four commands twice. If the glasses have
+        // so applying on both would duplicate the commands. If the glasses have
         // already told us where the relay lives, wait for it; if they never do,
         // BLE is the active transport and gets them.
         boolean relayExpected = (transport == null) && sppUuid != null;
@@ -874,16 +874,16 @@ public class ConnectionManager implements BleTransport.Listener, RelaySupervisor
     }
 
     /**
-     * Live state pushed on connect and re-pushed after a relay reconnect, since
-     * the init burst deliberately omits it (the captured SyncOffSetTime and
-     * sync_clone_data frames carry stale values and are filtered out).
+     * Refreshes the clock and existing connection defaults after a connect or
+     * relay reconnect. The init burst filters stale clock/settings snapshots.
+     * Wear detection and screen-off time stay as configured on the glasses:
+     * reconnecting must not replace those two user settings. The wear
+     * detection switch sends a setting only when the user explicitly taps it.
      */
     private void applyDefaults() {
         try {
             sendActionNow(ClockSync.build());
-            sendActionNow(SystemSettings.setWearDetection(true));
             sendActionNow(SystemSettings.setZenMode(false));
-            sendActionNow(SystemSettings.setScreenOffTime(10));
         } catch (Exception e) {
             LogBus.error("could not apply the default settings", e);
         }
