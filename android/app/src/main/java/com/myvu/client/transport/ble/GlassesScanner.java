@@ -133,11 +133,7 @@ public class GlassesScanner {
 
     private boolean matches(ScanResult r) {
         String name = nameOf(r);
-        if (name != null) {
-            String u = name.toUpperCase(Locale.US);
-            // Bonded/advertised name is "MYVU DCxx"; the model reads "Star Air".
-            if (u.contains("MYVU")) return true;
-        }
+        if (GlassesAdvertisement.matchesName(name)) return true;
         ScanRecord rec = r.getScanRecord();
         if (rec != null) {
             // IMIKI variants may have neither a local name nor service UUIDs.

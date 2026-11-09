@@ -4,7 +4,9 @@ import org.junit.Test;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertTrue;
 
 public class GlassesAdvertisementTest {
     private static final int ID = 0x0bd2;
@@ -24,6 +26,30 @@ public class GlassesAdvertisementTest {
 
     @Test public void identifiesManufacturerOnlyImikiAdvertisement() {
         assertEquals("IMIKI A1B2", GlassesAdvertisement.imikiName(ID, fixture()));
+    }
+
+    @Test public void recognizesImikiCachedNamesWithoutManufacturerData() {
+        // A bonded-device lookup supplies only a cached name, not scan bytes.
+        for (String name : new String[] {"IMIKI A1B2", "imiki a1b2", "ImIkI a1B2",
+                "IMIKI 0000", "IMIKI FFFF"}) {
+            assertTrue(name, GlassesAdvertisement.matchesName(name));
+        }
+    }
+
+    @Test public void preservesExistingMyvuNameRecognition() {
+        for (String name : new String[] {"MYVU", "MYVU A1B2", "Myvu Star Air",
+                "Meizu MYVU glasses"}) {
+            assertTrue(name, GlassesAdvertisement.matchesName(name));
+        }
+    }
+
+    @Test public void rejectsOtherImikiProductsAndMalformedCachedNames() {
+        for (String name : new String[] {null, "", "IMIKI", "IMIKI Watch",
+                "IMIKI A1B", "IMIKI A1B23", "IMIKI A1BG", "IMIKI 12-3",
+                " IMIKI A1B2", "IMIKI A1B2 ", "IMIKI A1B2\n", "IMIKI\tA1B2",
+                "IMIKI \uFF11\uFF12\uFF13\uFF14", "Other IMIKI A1B2"}) {
+            assertFalse(String.valueOf(name), GlassesAdvertisement.matchesName(name));
+        }
     }
 
     @Test public void acceptsNameWithoutOpaqueTailAndLowercaseHex() {
