@@ -358,9 +358,9 @@ public class ConnectActivity extends AppCompatActivity implements LogBus.Listene
      */
     private void showAutolockDialog() {
         if (!need()) return;
-        // These choices come from the observed menu and the official captured
-        // settings snapshot. Firmware acceptance still needs a device check.
-        final int[] seconds = {15, 30, 120};
+        // Offer the requested minute presets, converted to protocol seconds.
+        // Keep this order aligned with the displayed duration labels.
+        final int[] seconds = {60, 120, 300, 900};
         final String[] labels = getResources().getStringArray(R.array.autolock_durations);
         final int[] selected = {-1};
         final AlertDialog dialog = new MaterialAlertDialogBuilder(this)

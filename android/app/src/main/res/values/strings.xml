@@ -15,8 +15,9 @@
     <string name="autolock_read_timeout">No Autolock reply received. Try Read value again.</string>
     <!-- Keep this order aligned with the seconds in showAutolockDialog(). -->
     <string-array name="autolock_durations">
-        <item>15 seconds</item>
-        <item>30 seconds</item>
+        <item>1 minute</item>
         <item>2 minutes</item>
+        <item>5 minutes</item>
+        <item>15 minutes</item>
     </string-array>
 </resources>

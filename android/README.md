@@ -87,10 +87,10 @@ Long-press **Clear log** to share the diagnostic log.
 
 ### Autolock and wear detection
 
-In **Controls > System > Autolock**, select **Set duration**, choose 15 seconds,
-30 seconds or 2 minutes, then tap **Apply**. The client sends integer seconds
-(2 minutes is 120), only after that explicit action. Opening or cancelling the
-chooser sends nothing. The control is available only while connected.
+In **Controls > System > Autolock**, select **Set duration**, choose 1 minute,
+2 minutes, 5 minutes or 15 minutes, then tap **Apply**. The client sends integer
+seconds (60, 120, 300 or 900), only after that explicit action. Opening or
+cancelling the chooser sends nothing. The control is available only while connected.
 
 **Read value** requests `get_screen_off_time` and displays the glasses' reply
 on the same Controls page. The observed launcher reply contains an integer
