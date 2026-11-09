@@ -428,6 +428,11 @@
                             android:layout_marginTop="4dp" android:text="@string/autolock_disconnected"
                             android:accessibilityLiveRegion="polite"
                             android:textAppearance="?attr/textAppearanceBodyMedium" />
+                        <TextView android:id="@+id/txtAutolockReadback"
+                            android:layout_width="match_parent" android:layout_height="wrap_content"
+                            android:layout_marginTop="4dp" android:text="@string/autolock_no_report"
+                            android:accessibilityLiveRegion="polite"
+                            android:textAppearance="?attr/textAppearanceBodyMedium" />
                         <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
                             android:orientation="horizontal" android:layout_marginTop="6dp">
                             <com.google.android.material.button.MaterialButton

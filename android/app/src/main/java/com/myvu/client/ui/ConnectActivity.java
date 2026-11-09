@@ -35,6 +35,7 @@ import com.google.android.material.materialswitch.MaterialSwitch;
 import com.google.android.material.slider.Slider;
 import com.google.android.material.textfield.TextInputEditText;
 import com.myvu.client.R;
+import com.myvu.client.app.feature.AutolockReadback;
 import com.myvu.client.app.feature.NavCommands;
 import com.myvu.client.core.LogBus;
 import com.myvu.client.core.Prefs;
@@ -340,15 +341,12 @@ public class ConnectActivity extends AppCompatActivity implements LogBus.Listene
         findViewById(R.id.btnAutolockRead).setOnClickListener(new View.OnClickListener() {
             @Override public void onClick(View v) {
                 if (!need()) return;
-                // The reply schema is not verified here. Show the actual
-                // incoming log, never turn
-                // an outbound query or transport ACK into a saved-value claim.
-                service.connection().query("get_screen_off_time");
+                // Stay on Controls so the asynchronous device report is visible.
+                // An outgoing query or transport ACK is not a saved-value claim.
+                service.connection().queryScreenOffTime();
                 ((TextView) findViewById(R.id.txtAutolockStatus))
                         .setText(R.string.autolock_read_requested);
                 LogBus.log(getString(R.string.autolock_read_requested));
-                com.google.android.material.tabs.TabLayout tabs = findViewById(R.id.tabs);
-                tabs.selectTab(tabs.getTabAt(1));
             }
         });
     }
@@ -395,9 +393,27 @@ public class ConnectActivity extends AppCompatActivity implements LogBus.Listene
         findViewById(R.id.btnAutolockSet).setEnabled(ready);
         findViewById(R.id.btnAutolockRead).setEnabled(ready);
         TextView status = findViewById(R.id.txtAutolockStatus);
+        TextView readback = findViewById(R.id.txtAutolockReadback);
+        readback.setText(R.string.autolock_no_report);
         if (!ready) status.setText(R.string.autolock_disconnected);
         else if (getString(R.string.autolock_disconnected).contentEquals(status.getText())) {
             status.setText(R.string.autolock_unknown);
+        }
+        if (ready) {
+            AutolockReadback.Snapshot report = service.connection().autolockReadback();
+            switch (report.state) {
+                case READING:
+                    readback.setText(R.string.autolock_reading);
+                    break;
+                case REPORTED:
+                    readback.setText(getString(R.string.autolock_reported, report.seconds));
+                    break;
+                case TIMED_OUT:
+                    readback.setText(R.string.autolock_read_timeout);
+                    break;
+                default:
+                    break;
+            }
         }
     }
 

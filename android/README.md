@@ -92,11 +92,16 @@ In **Controls > System > Autolock**, select **Set duration**, choose 15 seconds,
 (2 minutes is 120), only after that explicit action. Opening or cancelling the
 chooser sends nothing. The control is available only while connected.
 
-**Read value** requests `get_screen_off_time` and opens the Log tab for the
-glasses' asynchronous reply. A request is not confirmation that the setting was
-accepted: reply parsing and accepted durations still need validation on each
-firmware. The UI therefore does not label the requested duration as saved or
-current. Verify the reply or the actual display timeout before relying on it.
+**Read value** requests `get_screen_off_time` and displays the glasses' reply
+on the same Controls page. The observed launcher reply contains an integer
+`screen_off_time`, shown separately as **Last reported by glasses**. Reads time
+out after five seconds; applying a setting or replacing its session clears
+the previous report. An unrelated relay restart preserves a BLE report.
+Other reply formats remain unverified and are left in
+the Log tab. A request or transport ACK is not confirmation that a setting was
+accepted, and the reply has no demonstrated request correlation. The UI does
+not label the requested duration as saved or current. Verify the reported
+value or actual display timeout before relying on it.
 
 Connecting or reconnecting no longer automatically enables wear detection or
 sets a 10-second screen timeout. Existing glasses values remain in place until
