@@ -161,7 +161,7 @@ public class ConnectionManager implements BleTransport.Listener, RelaySupervisor
                 // the relay down (its retry budget spent), a press listened to
                 // nothing and timed out with "0 packets in" -- so treat the
                 // press like the glasses asking for the relay back.
-                if (supervisor != null) supervisor.wake();
+                if (supervisor != null) supervisor.retry();
                 ai().onTrigger(code);
             }
         });
@@ -533,7 +533,8 @@ public class ConnectionManager implements BleTransport.Listener, RelaySupervisor
         }
         sppUuid = uuid;
         LogBus.log("<- SPP_SERVER_UUID_SYNC: uuid=" + sppUuid);
-        if (supervisor != null) supervisor.wake();
+        // A genuinely new relay identity gets a fresh bounded recovery run.
+        if (supervisor != null) supervisor.retry();
     }
 
     @Override
@@ -603,7 +604,8 @@ public class ConnectionManager implements BleTransport.Listener, RelaySupervisor
      */
     @Override
     public boolean isRelayConnected() {
-        if (relayEstablishing) return true; // handshake in flight; give it time
+        // canConnectRelay() keeps an in-flight handshake from overlapping a
+        // new attempt. It must not count as success and reset the retry budget.
         return rfcomm != null && rfcomm.isConnected() && rfSession != null && rfSession.ready;
     }
 
@@ -807,13 +809,10 @@ public class ConnectionManager implements BleTransport.Listener, RelaySupervisor
 
     private void scheduleInitMessage(final List<InitBurst.Entry> entries, final int index,
                                      final RelaySession session, final Transport transport) {
-        if (index >= entries.size()) {
-            session.ready = true;
-            LogBus.log("init burst complete -- "
-                    + (transport != null ? "app relay ready" : "BLE session ready"));
-            onSessionReady(transport);
-            return;
-        }
+        // Posted init callbacks may outlive their transport/session. They must
+        // neither declare a replacement ready nor replenish its retry budget.
+        if (transport != null ? transport != rfcomm || session != rfSession
+                : session != bleSession) return;
         if (!isUsable(transport)) {
             LogBus.warn("link dropped during the init burst at message " + index
                     + " -- session left incomplete");
@@ -827,6 +826,14 @@ public class ConnectionManager implements BleTransport.Listener, RelaySupervisor
             } else {
                 fail("BLE init burst did not complete");
             }
+            return;
+        }
+
+        if (index >= entries.size()) {
+            session.ready = true;
+            LogBus.log("init burst complete -- "
+                    + (transport != null ? "app relay ready" : "BLE session ready"));
+            onSessionReady(transport);
             return;
         }
 
@@ -845,7 +852,10 @@ public class ConnectionManager implements BleTransport.Listener, RelaySupervisor
         setState(ConnectionState.READY);
         // A clean session clears the backoff, so the next drop starts fresh.
         cancelReconnect();
-        if (transport != null) relayEstablished();
+        if (transport != null) {
+            relayEstablished();
+            if (supervisor != null) supervisor.onRelayReady();
+        }
 
         // Apply defaults only on the transport that will actually carry app
         // traffic. BLE goes ready first and the relay takes over seconds later,
