@@ -85,6 +85,25 @@ copy on its current version.
 
 Long-press **Clear log** to share the diagnostic log.
 
+### Autolock and wear detection
+
+In **Controls > System > Autolock**, select **Set duration**, choose 15 seconds,
+30 seconds or 2 minutes, then tap **Apply**. The client sends integer seconds
+(2 minutes is 120), only after that explicit action. Opening or cancelling the
+chooser sends nothing. The control is available only while connected.
+
+**Read value** requests `get_screen_off_time` and opens the Log tab for the
+glasses' asynchronous reply. A request is not confirmation that the setting was
+accepted: reply parsing and accepted durations still need validation on each
+firmware. The UI therefore does not label the requested duration as saved or
+current. Verify the reply or the actual display timeout before relying on it.
+
+Connecting or reconnecting no longer automatically enables wear detection or
+sets a 10-second screen timeout. Existing glasses values remain in place until
+explicitly changed. This does not restore settings previously written by older
+clients. Wear detection can also put the display to sleep independently of
+Autolock; its existing switch remains a separate control.
+
 ### Configuring assistant services
 
 The three stages are selected independently in Settings, so cloud and local

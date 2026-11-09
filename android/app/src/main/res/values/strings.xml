@@ -1,3 +1,18 @@
 <resources>
     <string name="app_name">MYVU Client</string>
+    <string name="autolock_title">Autolock</string>
+    <string name="autolock_set">Set duration</string>
+    <string name="autolock_read">Read value</string>
+    <string name="autolock_requested_duration">Requested Autolock duration</string>
+    <string name="autolock_apply">Apply</string>
+    <string name="autolock_disconnected">Connect to read or change Autolock.</string>
+    <string name="autolock_unknown">Current duration has not been read.</string>
+    <string name="autolock_requested">Requested %1$s. Verify the result on the glasses or use Read value.</string>
+    <string name="autolock_read_requested">Current Autolock value requested. Check Log for a reply from the glasses.</string>
+    <!-- Keep this order aligned with the seconds in showAutolockDialog(). -->
+    <string-array name="autolock_durations">
+        <item>15 seconds</item>
+        <item>30 seconds</item>
+        <item>2 minutes</item>
+    </string-array>
 </resources>
