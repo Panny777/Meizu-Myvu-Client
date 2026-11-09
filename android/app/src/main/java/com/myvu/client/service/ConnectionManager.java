@@ -10,6 +10,7 @@ import android.os.HandlerThread;
 import com.myvu.client.app.AppLayer;
 import com.myvu.client.app.InboundRouter;
 import com.myvu.client.app.RelaySession;
+import com.myvu.client.app.feature.AutolockReadback;
 import com.myvu.client.app.feature.ClockSync;
 import com.myvu.client.app.feature.SystemSettings;
 import com.myvu.client.app.feature.Teleprompter;
@@ -81,6 +82,7 @@ public class ConnectionManager implements BleTransport.Listener, RelaySupervisor
     private final Listener listener;
 
     private volatile ConnectionState state = ConnectionState.IDLE;
+    private final AutolockReadback autolockReadback = new AutolockReadback();
     private String targetMac;
     private BluetoothDevice device;
     private byte[] ownId;
@@ -142,6 +144,10 @@ public class ConnectionManager implements BleTransport.Listener, RelaySupervisor
 
     public InboundRouter inboundRouter() {
         return inbound;
+    }
+
+    public AutolockReadback.Snapshot autolockReadback() {
+        return autolockReadback.snapshot();
     }
 
     {
@@ -328,6 +334,7 @@ public class ConnectionManager implements BleTransport.Listener, RelaySupervisor
     }
 
     private void teardown() {
+        autolockReadback.invalidate();
         if (scanner != null) scanner.stop();
         if (weather != null) weather.stop();
         if (nav != null) nav.stop();
@@ -356,6 +363,7 @@ public class ConnectionManager implements BleTransport.Listener, RelaySupervisor
     }
 
     private void closeRelay() {
+        autolockReadback.invalidateSession(rfSession);
         if (rfcomm != null) {
             rfcomm.close();
             rfcomm = null;
@@ -661,6 +669,8 @@ public class ConnectionManager implements BleTransport.Listener, RelaySupervisor
 
         @Override
         public void onDisconnected(Transport transport, Throwable cause) {
+            // An old socket callback must not invalidate the current report.
+            if (transport == rfcomm) autolockReadback.invalidateSession(rfSession);
             relayEstablished();
             if (cause != null) {
                 LogBus.warn("app relay lost: " + cause.getClass().getSimpleName()
@@ -771,6 +781,13 @@ public class ConnectionManager implements BleTransport.Listener, RelaySupervisor
                 return;
             }
 
+            // Decode only genuine incoming data from the current session.
+            // The report is published before the log prompts the UI to render.
+            boolean currentSession = transport != null
+                    ? transport == rfcomm && session == rfSession : session == bleSession;
+            if (currentSession) {
+                autolockReadback.accept(session, m.msgBody, android.os.SystemClock.elapsedRealtime());
+            }
             String body = new String(m.msgBody, StandardCharsets.UTF_8);
             LogBus.log("<- msgId=" + m.msgId + " " + truncate(body, 200));
             // The glasses re-send indefinitely until acknowledged.
@@ -849,7 +866,7 @@ public class ConnectionManager implements BleTransport.Listener, RelaySupervisor
 
         // Apply defaults only on the transport that will actually carry app
         // traffic. BLE goes ready first and the relay takes over seconds later,
-        // so applying on both sent all four commands twice. If the glasses have
+        // so applying on both would duplicate the commands. If the glasses have
         // already told us where the relay lives, wait for it; if they never do,
         // BLE is the active transport and gets them.
         boolean relayExpected = (transport == null) && sppUuid != null;
@@ -874,16 +891,16 @@ public class ConnectionManager implements BleTransport.Listener, RelaySupervisor
     }
 
     /**
-     * Live state pushed on connect and re-pushed after a relay reconnect, since
-     * the init burst deliberately omits it (the captured SyncOffSetTime and
-     * sync_clone_data frames carry stale values and are filtered out).
+     * Refreshes the clock and existing connection defaults after a connect or
+     * relay reconnect. The init burst filters stale clock/settings snapshots.
+     * Wear detection and screen-off time stay as configured on the glasses:
+     * reconnecting must not replace those two user settings. The wear
+     * detection switch sends a setting only when the user explicitly taps it.
      */
     private void applyDefaults() {
         try {
             sendActionNow(ClockSync.build());
-            sendActionNow(SystemSettings.setWearDetection(true));
             sendActionNow(SystemSettings.setZenMode(false));
-            sendActionNow(SystemSettings.setScreenOffTime(10));
         } catch (Exception e) {
             LogBus.error("could not apply the default settings", e);
         }
@@ -1101,8 +1118,43 @@ public class ConnectionManager implements BleTransport.Listener, RelaySupervisor
     }
 
     /** Display auto-off, seconds (REPL: screenoff). */
-    public void setScreenOffTime(int seconds) {
-        safeSend(safeScreenOff(seconds));
+    public void setScreenOffTime(final int seconds) {
+        conn.post(new Runnable() {
+            @Override public void run() {
+                autolockReadback.invalidate();
+                String action = safeScreenOff(seconds);
+                if (action != null) sendActionNow(action);
+            }
+        });
+    }
+
+    /** Request a fresh report without treating the outgoing query as a value. */
+    public void queryScreenOffTime() {
+        conn.post(new Runnable() {
+            @Override public void run() {
+                RelaySession session = activeSession();
+                if (state != ConnectionState.READY || session == null || !session.ready) {
+                    autolockReadback.invalidate();
+                    LogBus.warn("not connected; Autolock read skipped");
+                    return;
+                }
+                try {
+                    String query = SystemSettings.query("get_screen_off_time");
+                    autolockReadback.beginRead(session, android.os.SystemClock.elapsedRealtime());
+                    sendActionNow(query);
+                    conn.postDelayed(new Runnable() {
+                        @Override public void run() {
+                            if (autolockReadback.expire(android.os.SystemClock.elapsedRealtime())) {
+                                LogBus.warn("no Autolock report received before the read timeout");
+                            }
+                        }
+                    }, AutolockReadback.READ_TIMEOUT_MS);
+                } catch (Exception e) {
+                    autolockReadback.invalidate();
+                    LogBus.error("could not request Autolock", e);
+                }
+            }
+        });
     }
 
     /** Rename the glasses (REPL: name). */

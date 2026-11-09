@@ -6,6 +6,7 @@ import android.animation.ObjectAnimator;
 import android.animation.ValueAnimator;
 import android.content.ComponentName;
 import android.content.Context;
+import android.content.DialogInterface;
 import android.content.Intent;
 import android.content.ServiceConnection;
 import android.content.pm.PackageManager;
@@ -23,15 +24,18 @@ import android.widget.TextView;
 
 import androidx.annotation.NonNull;
 import androidx.appcompat.app.AppCompatActivity;
+import androidx.appcompat.app.AlertDialog;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
 
 import com.google.android.material.button.MaterialButton;
 import com.google.android.material.button.MaterialButtonToggleGroup;
+import com.google.android.material.dialog.MaterialAlertDialogBuilder;
 import com.google.android.material.materialswitch.MaterialSwitch;
 import com.google.android.material.slider.Slider;
 import com.google.android.material.textfield.TextInputEditText;
 import com.myvu.client.R;
+import com.myvu.client.app.feature.AutolockReadback;
 import com.myvu.client.app.feature.NavCommands;
 import com.myvu.client.core.LogBus;
 import com.myvu.client.core.Prefs;
@@ -84,6 +88,7 @@ public class ConnectActivity extends AppCompatActivity implements LogBus.Listene
         public void onServiceDisconnected(ComponentName name) {
             service = null;
             bound = false;
+            renderAutolockControls(false);
         }
     };
 
@@ -330,6 +335,86 @@ public class ConnectActivity extends AppCompatActivity implements LogBus.Listene
         findViewById(R.id.btnDeviceInfo).setOnClickListener(new View.OnClickListener() {
             @Override public void onClick(View v) { if (need()) service.connection().query("get_device_info"); }
         });
+        findViewById(R.id.btnAutolockSet).setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View v) { showAutolockDialog(); }
+        });
+        findViewById(R.id.btnAutolockRead).setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View v) {
+                if (!need()) return;
+                // Stay on Controls so the asynchronous device report is visible.
+                // An outgoing query or transport ACK is not a saved-value claim.
+                service.connection().queryScreenOffTime();
+                ((TextView) findViewById(R.id.txtAutolockStatus))
+                        .setText(R.string.autolock_read_requested);
+                LogBus.log(getString(R.string.autolock_read_requested));
+            }
+        });
+    }
+
+    /**
+     * A choice is a requested duration, not a readback of the glasses. Opening
+     * or cancelling this dialog never writes settings; only Apply may send one
+     * command. Keep the values in seconds, as expected by SystemSettings.
+     */
+    private void showAutolockDialog() {
+        if (!need()) return;
+        // Offer the requested minute presets, converted to protocol seconds.
+        // Keep this order aligned with the displayed duration labels.
+        final int[] seconds = {60, 120, 300, 900};
+        final String[] labels = getResources().getStringArray(R.array.autolock_durations);
+        final int[] selected = {-1};
+        final AlertDialog dialog = new MaterialAlertDialogBuilder(this)
+                .setTitle(R.string.autolock_requested_duration)
+                .setSingleChoiceItems(labels, -1, new DialogInterface.OnClickListener() {
+                    @Override public void onClick(DialogInterface d, int which) {
+                        selected[0] = which;
+                        ((AlertDialog) d).getButton(AlertDialog.BUTTON_POSITIVE).setEnabled(true);
+                    }
+                })
+                .setNegativeButton(android.R.string.cancel, null)
+                .setPositiveButton(R.string.autolock_apply, new DialogInterface.OnClickListener() {
+                    @Override public void onClick(DialogInterface d, int which) {
+                        // A connection may disappear while the chooser is open.
+                        // Recheck it at Apply, and do not queue a reconnect write.
+                        if (selected[0] < 0 || !need()) return;
+                        service.connection().setScreenOffTime(seconds[selected[0]]);
+                        String status = getString(R.string.autolock_requested, labels[selected[0]]);
+                        ((TextView) findViewById(R.id.txtAutolockStatus)).setText(status);
+                        LogBus.log(status);
+                    }
+                }).create();
+        dialog.show();
+        // No preset is selected: that would look like a verified device value.
+        dialog.getButton(AlertDialog.BUTTON_POSITIVE).setEnabled(false);
+    }
+
+    /** Do not leave a previous session's request looking like current state. */
+    private void renderAutolockControls(boolean ready) {
+        findViewById(R.id.btnAutolockSet).setEnabled(ready);
+        findViewById(R.id.btnAutolockRead).setEnabled(ready);
+        TextView status = findViewById(R.id.txtAutolockStatus);
+        TextView readback = findViewById(R.id.txtAutolockReadback);
+        readback.setText(R.string.autolock_no_report);
+        if (!ready) status.setText(R.string.autolock_disconnected);
+        else if (getString(R.string.autolock_disconnected).contentEquals(status.getText())) {
+            status.setText(R.string.autolock_unknown);
+        }
+        if (ready) {
+            AutolockReadback.Snapshot report = service.connection().autolockReadback();
+            switch (report.state) {
+                case READING:
+                    readback.setText(R.string.autolock_reading);
+                    break;
+                case REPORTED:
+                    readback.setText(getString(R.string.autolock_reported, report.seconds));
+                    break;
+                case TIMED_OUT:
+                    readback.setText(R.string.autolock_read_timeout);
+                    break;
+                default:
+                    break;
+            }
+        }
     }
 
     // ------------------------------------------------------- connect / status
@@ -501,6 +586,7 @@ public class ConnectActivity extends AppCompatActivity implements LogBus.Listene
 
     /** Called on the main thread whenever the connection state changes. */
     private void render(ConnectionState state) {
+        renderAutolockControls(state == ConnectionState.READY && bound && service != null);
         boolean busy = state == ConnectionState.BONDING || state == ConnectionState.CONNECTING
                 || state == ConnectionState.PAIRING || state == ConnectionState.SESSION;
         progress.setVisibility(busy ? View.VISIBLE : View.GONE);
