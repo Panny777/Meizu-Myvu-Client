@@ -22,7 +22,8 @@ import java.util.UUID;
  * on the advertised service UUID 0x0bd3 (BleConstants.SERVICE_UUID).
  *
  * We scan UNfiltered and match in the callback (by advertised service UUID OR a
- * MYVU device name) rather than handing a ScanFilter to the stack: some firmware
+ * MYVU device name, or an IMIKI manufacturer identity) rather than handing a
+ * ScanFilter to the stack: some firmware
  * puts the service UUID only in the scan-response, which a hardware filter can
  * miss, and matching the name as a fallback makes discovery robust across
  * generations. A short scan on a foreground screen is cheap.
@@ -132,13 +133,13 @@ public class GlassesScanner {
 
     private boolean matches(ScanResult r) {
         String name = nameOf(r);
-        if (name != null) {
-            String u = name.toUpperCase(Locale.US);
-            // Bonded/advertised name is "MYVU DCxx"; the model reads "Star Air".
-            if (u.contains("MYVU")) return true;
-        }
+        if (GlassesAdvertisement.matchesName(name)) return true;
         ScanRecord rec = r.getScanRecord();
         if (rec != null) {
+            // IMIKI variants may have neither a local name nor service UUIDs.
+            // Their manufacturer payload is a separate AD field, not a service
+            // UUID. Check it independently of a possibly stale cached name.
+            if (manufacturerName(rec) != null) return true;
             List<ParcelUuid> uuids = rec.getServiceUuids();
             if (uuids != null) {
                 for (ParcelUuid pu : uuids) {
@@ -154,11 +155,19 @@ public class GlassesScanner {
         ScanRecord rec = r.getScanRecord();
         String adv = rec != null ? rec.getDeviceName() : null;
         if (adv != null && !adv.isEmpty()) return adv;
+        String manufacturer = manufacturerName(rec);
+        if (manufacturer != null) return manufacturer;
         try {
             return r.getDevice().getName();
         } catch (SecurityException e) {
             return null;
         }
+    }
+
+    private static String manufacturerName(ScanRecord record) {
+        if (record == null) return null;
+        int id = GlassesAdvertisement.IMIKI_NAME_MANUFACTURER_ID;
+        return GlassesAdvertisement.imikiName(id, record.getManufacturerSpecificData(id));
     }
 
     private static UUID uuid16(int i) {
