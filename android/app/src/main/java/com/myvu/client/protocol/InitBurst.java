@@ -26,8 +26,8 @@ import java.util.List;
  *     capture's stale high msgIds as out-of-order.
  *  2. Messages replaying stale state are dropped -- SyncOffSetTime carries an
  *     old wall clock (it would set the glasses' clock backwards) and
- *     sync_clone_data an old settings snapshot; both fight the live defaults
- *     applied right after connect.
+ *     sync_clone_data an old settings snapshot. The clock is refreshed after
+ *     connect; the captured settings must not replace the user's preferences.
  */
 public final class InitBurst {
     private InitBurst() {}
