@@ -87,6 +87,9 @@ public class TranscribeSession {
 
         /** The current caption. {@code isFinal} lines are committed to the log. */
         void onCaption(String text, boolean isFinal);
+
+        /** A committed line's translation, which lands after its original. */
+        void onTranslation(String original, String translated);
     }
 
     public enum State { IDLE, PREPARING, RUNNING, STOPPING }
@@ -104,6 +107,47 @@ public class TranscribeSession {
     private TranscribeProtocol.Peer peer = TranscribeProtocol.Peer.TRANSLATE;
     private String srcLang = "en";
     private String dstLang = "en";
+
+    /** Null when translation is off or its provider is not usable. */
+    private CaptionTranslator translator;
+
+    /**
+     * The scene is always opened in TRANSCRIBE mode with {@code dst == src},
+     * translating or not — because that is the only configuration observed to
+     * render.
+     *
+     * Two experiments on hardware, both ending with the lens stuck on its
+     * loading screen while perfectly good captions arrived:
+     * <pre>
+     *   transType 1, dst "cn"   (src "en")   -> never drew
+     *   transType 2, dst "cn"   (src "en")   -> never drew
+     *   transType 1, dst == src              -> draws
+     * </pre>
+     * So it is {@code dst != src} that the scene refuses, independently of the
+     * mode. The vendor's native two-line layout needs
+     * {@link TranscribeProtocol#TRANS_TYPE_SIMUL_INTERPRET} plus something else
+     * we have not identified — and the reference capture is a transcription
+     * session, so there is nothing to diff against. Finishing it needs a
+     * btsnoop of the official app actually translating.
+     *
+     * Until then the translation is rendered INTO the caption line, which the
+     * scene draws happily. See {@link #emit}.
+     */
+    private int transType = TranscribeProtocol.TRANS_TYPE_TRANSCRIBE;
+    private static final int SUBTITLE_SET_TYPE = TranscribeProtocol.SUBTITLE_TRANSLATION_ONLY;
+
+    /** The mode and language pair a glasses-initiated start asked for. */
+    private static final class StartRequest {
+        final int transType;
+        final String src;
+        final String dst;
+
+        StartRequest(int transType, String src, String dst) {
+            this.transType = transType;
+            this.src = src;
+            this.dst = dst;
+        }
+    }
 
     /** Written on the connection thread, read on the decode thread. */
     private volatile DeepgramStream deepgram;
@@ -155,7 +199,7 @@ public class TranscribeSession {
      *                vendor's short list.
      */
     public void start(final TranscribeProtocol.Peer peer, final String srcLang) {
-        startAt(peer, srcLang, true, 0);
+        startAt(peer, srcLang, null, true, 0);
     }
 
     /**
@@ -204,14 +248,40 @@ public class TranscribeSession {
                             + "ms after the scene closed");
                     return;
                 }
-                LogBus.log("transcribe: opened on the glasses (" + opened.glassesPkg + ")");
-                start(opened, Prefs.transcribeGlassesLang(context));
+                // Let the scene finish launching first.
+                //
+                // This telemetry fires the instant the app is tapped in the
+                // dock, and we were answering it in the SAME millisecond -- so
+                // open_app landed on a scene the launcher was still bringing up.
+                // The phone-started path never hits this because nothing is open
+                // when it fires, which is exactly why that one works and this one
+                // spins. Short enough not to feel like a delay, long enough that
+                // the scene exists: in the logs it announces itself ~220ms in.
+                LogBus.log("transcribe: opened on the glasses (" + opened.glassesPkg
+                        + ") -- letting the scene settle");
+                conn.postDelayed(new Runnable() {
+                    @Override
+                    public void run() {
+                        if (state != State.IDLE) return;
+                        start(opened, Prefs.transcribeGlassesLang(context));
+                    }
+                }, SCENE_SETTLE_MS);
             }
         });
     }
 
-    /** Long enough to cover the close telemetry arriving after msgCmd 7. */
-    private static final long REOPEN_GUARD_MS = 5000;
+    /**
+     * Only long enough to cover the close telemetry that trails msgCmd 7.
+     *
+     * Was 5s, which swallowed real reopens: closing the scene and opening it
+     * again -- exactly what anyone does while testing -- landed inside the
+     * window and was logged as ignored. The close events arrive within a few
+     * hundred ms of msgCmd 7, so this needs to be short.
+     */
+    private static final long REOPEN_GUARD_MS = 1200;
+
+    /** Grace for the glasses-side scene to finish launching before we drive it. */
+    private static final long SCENE_SETTLE_MS = 1200;
     private long lastSceneClosedAt;
 
     public void onGlassesLaunchRequest(final TranscribeProtocol.Peer requested) {
@@ -227,7 +297,7 @@ public class TranscribeSession {
                 }
                 if (state != State.IDLE) return;
                 LogBus.log("transcribe: started on the glasses (" + requested.glassesPkg + ")");
-                startAt(requested, Prefs.transcribeGlassesLang(context), false, 0);
+                startAt(requested, Prefs.transcribeGlassesLang(context), null, false, 0);
             }
         });
     }
@@ -237,7 +307,8 @@ public class TranscribeSession {
     private static final long RELAY_WAIT_INTERVAL_MS = 500;
 
     private void startAt(final TranscribeProtocol.Peer peer, final String srcLang,
-                         final boolean openTheScene, final int attempt) {
+                         final StartRequest requested, final boolean openTheScene,
+                         final int attempt) {
         conn.post(new Runnable() {
             @Override
             public void run() {
@@ -264,14 +335,21 @@ public class TranscribeSession {
                     conn.postDelayed(new Runnable() {
                         @Override
                         public void run() {
-                            startAt(peer, srcLang, openTheScene, attempt + 1);
+                            startAt(peer, srcLang, requested, openTheScene, attempt + 1);
                         }
                     }, RELAY_WAIT_INTERVAL_MS);
                     return;
                 }
                 TranscribeSession.this.peer = peer;
-                TranscribeSession.this.srcLang = srcLang;
-                TranscribeSession.this.dstLang = srcLang;
+                // requested != null means the GLASSES chose the mode and the
+                // language pair; otherwise we impose the phone's.
+                if (requested == null) {
+                    TranscribeSession.this.srcLang = srcLang;
+                    TranscribeSession.this.dstLang = srcLang;
+                    TranscribeSession.this.transType =
+                            TranscribeProtocol.TRANS_TYPE_TRANSCRIBE;
+                }
+                configureTranslator();
                 state = State.PREPARING;
                 requestId = randomId();
                 recognizeId = randomId();
@@ -311,7 +389,7 @@ public class TranscribeSession {
 
     private void openScene() {
         sendToLauncher(TranscribeProtocol.openScene(
-                peer, srcLang, dstLang, Prefs.transcribeSubtitleSet(context)));
+                peer, srcLang, dstLang, SUBTITLE_SET_TYPE, transType));
     }
 
     private final Runnable preSession = new Runnable() {
@@ -319,7 +397,7 @@ public class TranscribeSession {
         public void run() {
             if (state != State.PREPARING) return;
             sendToPeer(TranscribeProtocol.transState(STATE_NOT_START, EXT_NONE));
-            sendToPeer(TranscribeProtocol.subtitleSetType(Prefs.transcribeSubtitleSet(context)));
+            sendToPeer(TranscribeProtocol.subtitleSetType(SUBTITLE_SET_TYPE));
             // Twice, as the vendor does. Cheap, and the whole point of this
             // sequence is to differ from a known-good session in nothing.
             sendToPeer(TranscribeProtocol.transState(STATE_NOT_START, EXT_CONNECT_ON));
@@ -359,11 +437,11 @@ public class TranscribeSession {
         @Override
         public void run() {
             if (state != State.PREPARING) return;
-            sendToPeer(TranscribeProtocol.startTrans(srcLang, dstLang));
+            sendToPeer(TranscribeProtocol.startTrans(srcLang, dstLang, transType));
             sendToPeer(TranscribeProtocol.recordState(REC_INIT));
             sendToPeer(TranscribeProtocol.transState(STATE_PREPARING, EXT_NONE));
             closeAssistant();
-            sendToPeer(TranscribeProtocol.languageSet(srcLang, dstLang));
+            sendToPeer(TranscribeProtocol.languageSet(srcLang, dstLang, transType));
             // The lens now shows "connecting"; it stays there until the
             // recogniser answers, which is exactly the window we need.
             sendToPeer(TranscribeProtocol.transState(STATE_PREPARING, EXT_SHOW_WAITING));
@@ -607,6 +685,7 @@ public class TranscribeSession {
             deepgram.stop();
             deepgram = null;
         }
+        stopTranslator();
         stopDecoder();
         LogBus.log("transcribe: session ended (" + audioPackets + " audio packets"
                 + (decodeFailures > 0 ? ", " + decodeFailures + " decode failures" : "") + ")");
@@ -627,6 +706,7 @@ public class TranscribeSession {
                     deepgram.stop();
                     deepgram = null;
                 }
+                stopTranslator();
                 stopDecoder();
                 state = State.IDLE;
                 status("Disconnected", false);
@@ -666,10 +746,13 @@ public class TranscribeSession {
                 // this is just the scene re-announcing itself, so ignore it.
                 LogBus.log("transcribe: glasses asked to start (" + msg.data + ")");
                 if (state == State.IDLE) {
-                    // The scene is already up, so skip open_app -- same as the
-                    // launch-request path. Its payload names the language the
-                    // user chose ON the glasses, which beats our stored default.
-                    startAt(peerFor(msg.srcPkg), langFrom(msg.data), false, 0);
+                    // This is the message the mode actually travels in, so it
+                    // ends any wait started by the scene opening. No open_app:
+                    // the scene is up, in the mode the user picked, and
+                    // reopening it would restart it in ours.
+                    adoptGlassesRequest(msg.data);
+                    startAt(peerFor(msg.srcPkg), srcLang,
+                            new StartRequest(transType, srcLang, dstLang), false, 0);
                 }
                 break;
             case TranscribeProtocol.G2P_EXIT:
@@ -683,6 +766,7 @@ public class TranscribeSession {
                         deepgram.stop();
                         deepgram = null;
                     }
+                    stopTranslator();
                     stopDecoder();
                     state = State.IDLE;
                     status("Closed on the glasses", false);
@@ -704,6 +788,39 @@ public class TranscribeSession {
         }
     }
 
+    /**
+     * Decides whether this session translates, and into what.
+     *
+     * Two ways in. The glasses asking for {@code dst != src} means the user
+     * picked a translation in the scene's own picker, and that wins outright --
+     * the lens has already built its UI around it. Otherwise the phone's own
+     * setting applies, translating into the configured target while leaving the
+     * scene in the plain-captioning configuration that renders.
+     */
+    private void configureTranslator() {
+        translator = null;
+        boolean glassesAskedToTranslate = !dstLang.equals(srcLang);
+        String target = glassesAskedToTranslate ? dstLang : Prefs.translateTarget(context);
+        if (!glassesAskedToTranslate && !Prefs.translateEnabled(context)) return;
+
+        if (!Languages.isSupported(target)) {
+            LogBus.warn("transcribe: '" + target + "' is not a language the glasses"
+                    + " accept -- captioning without translation");
+            return;
+        }
+        CaptionTranslator t = new CaptionTranslator(context, target);
+        if (!t.isConfigured()) {
+            LogBus.warn("transcribe: translation is on but " + t.providerLabel()
+                    + " is not configured -- captioning without it");
+            t.shutdown();
+            return;
+        }
+        translator = t;
+        LogBus.log("transcribe: translating into " + Languages.nameOf(target)
+                + " via " + t.providerLabel()
+                + (glassesAskedToTranslate ? " (asked for by the glasses)" : ""));
+    }
+
     /** The peer a message came from, falling back to whatever we are driving. */
     private TranscribeProtocol.Peer peerFor(String srcPkg) {
         TranscribeProtocol.Peer p = TranscribeProtocol.Peer.forPackage(srcPkg);
@@ -711,22 +828,38 @@ public class TranscribeSession {
     }
 
     /**
-     * The source language out of a StartTrans payload, or the stored default.
+     * Takes the mode and language pair from a glasses-initiated StartTrans.
      *
-     * The glasses send what the user picked in the scene's own language picker,
-     * so honouring it keeps the two ends from disagreeing about what is being
-     * spoken -- and it is the only place that choice is visible to us.
+     * The vendor's phone app adopts these wholesale rather than imposing its
+     * own -- {@code InterConnectHelper.handleStartTrans()} reads transType, src
+     * and dst straight off the message, persists the mode, and hands the same
+     * triple to its channel handler. Which is the sane architecture: the user
+     * chose them in the scene's own picker, so the scene has already built its
+     * UI around them, and contradicting it is how you end up with a lens that
+     * will not leave its loading screen.
+     *
+     * The 4 -> 3 fold is the vendor's too: telephone translation collapses onto
+     * plain dialogue translation, since we are not in a call.
      */
-    private String langFrom(String startTransJson) {
-        if (startTransJson != null) {
-            try {
-                String src = new org.json.JSONObject(startTransJson).optString("src", "");
-                if (!src.isEmpty()) return src;
-            } catch (Exception ignored) {
-                // Malformed payload: the stored default is a fine answer.
-            }
+    private void adoptGlassesRequest(String startTransJson) {
+        srcLang = Prefs.transcribeGlassesLang(context);
+        dstLang = srcLang;
+        transType = TranscribeProtocol.TRANS_TYPE_TRANSCRIBE;
+        if (startTransJson == null) return;
+        try {
+            org.json.JSONObject o = new org.json.JSONObject(startTransJson);
+            String src = o.optString("src", "");
+            String dst = o.optString("dst", "");
+            int type = o.optInt("transType", TranscribeProtocol.TRANS_TYPE_TRANSCRIBE);
+            if (type == 4) type = 3;
+            if (!src.isEmpty()) srcLang = src;
+            dstLang = dst.isEmpty() ? srcLang : dst;
+            transType = type;
+            LogBus.log("transcribe: the glasses asked for mode " + transType
+                    + " " + srcLang + " -> " + dstLang);
+        } catch (Exception e) {
+            LogBus.warn("transcribe: unreadable StartTrans, using our own config: " + e);
         }
-        return Prefs.transcribeGlassesLang(context);
     }
 
     // ----------------------------------------------------------- audio path
@@ -747,6 +880,19 @@ public class TranscribeSession {
                 }
             }
         });
+    }
+
+    /**
+     * Drops the translator and its thread.
+     *
+     * Cleared before shutdown so an in-flight request that completes during
+     * teardown finds {@code translator != t} and discards its result rather
+     * than sending a caption into a closed session.
+     */
+    private void stopTranslator() {
+        CaptionTranslator t = translator;
+        translator = null;
+        if (t != null) t.shutdown();
     }
 
     private void stopDecoder() {
@@ -835,9 +981,46 @@ public class TranscribeSession {
      */
     private void commitUtterance() {
         if (state != State.RUNNING || utterance.length() == 0) return;
-        emit(utterance.toString(), RESULT_FINAL, lastResultEndMs);
+        String line = utterance.toString();
+        emit(line, RESULT_FINAL, lastResultEndMs);
+        translateLine(line, Math.max(0, utteranceStartMs), lastResultEndMs);
         utterance.setLength(0);
         utteranceStartMs = -1;
+    }
+
+    /**
+     * Replaces a committed caption with its translation.
+     *
+     * The scene draws ONE subtitle line, from {@code src.content}, so the
+     * translation is sent as another final caption for the same utterance
+     * rather than as a {@code dst} frame — the lens overwrites the line in
+     * place, and the effect is the sentence settling from what was said into
+     * what it means. Timestamps are the original's, so this reads as a revision
+     * of that utterance and not a new one.
+     *
+     * Fire-and-forget: the original is already readable, so a slow or failed
+     * translation just leaves it standing.
+     */
+    private void translateLine(final String line, final long startMs, final long endMs) {
+        final CaptionTranslator t = translator;
+        if (t == null) return;
+        t.translate(line, new CaptionTranslator.Callback() {
+            @Override
+            public void onTranslated(final String original, final String translated) {
+                conn.post(new Runnable() {
+                    @Override
+                    public void run() {
+                        // The session can end while a request is in flight.
+                        if (state != State.RUNNING || translator != t) return;
+                        sendToPeer(TranscribeProtocol.asrResult(
+                                resultCmd, requestId, recognizeId,
+                                translated, RESULT_FINAL, startMs, endMs));
+                        LogBus.log("translated: " + translated);
+                        if (listener != null) listener.onTranslation(original, translated);
+                    }
+                });
+            }
+        });
     }
 
     private static String join(String settled, String interim) {

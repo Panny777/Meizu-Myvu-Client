@@ -52,6 +52,7 @@ public class SettingsActivity extends AppCompatActivity {
     private TextInputEditText txtDeepgramModel;
     private TextInputEditText txtDeepgramLanguage;
     private TextInputEditText txtGlassesLang;
+    private TextInputEditText txtTranslateTarget;
 
     private AiProvider aiProvider;
     private SttProvider sttProvider;
@@ -98,6 +99,7 @@ public class SettingsActivity extends AppCompatActivity {
         txtDeepgramModel = findViewById(R.id.txtDeepgramModel);
         txtDeepgramLanguage = findViewById(R.id.txtDeepgramLanguage);
         txtGlassesLang = findViewById(R.id.txtGlassesLang);
+        txtTranslateTarget = findViewById(R.id.txtTranslateTarget);
     }
 
     private void configureProviderSelectors() {
@@ -171,6 +173,16 @@ public class SettingsActivity extends AppCompatActivity {
         txtDeepgramModel.setText(Prefs.deepgramModel(this));
         txtDeepgramLanguage.setText(Prefs.deepgramLanguage(this));
         txtGlassesLang.setText(Prefs.transcribeGlassesLang(this));
+        txtTranslateTarget.setText(Prefs.translateTarget(this));
+
+        MaterialSwitch translate = findViewById(R.id.swTranslate);
+        translate.setChecked(Prefs.translateEnabled(this));
+        translate.setOnCheckedChangeListener(new CompoundButton.OnCheckedChangeListener() {
+            @Override
+            public void onCheckedChanged(CompoundButton button, boolean checked) {
+                Prefs.setTranslateEnabled(SettingsActivity.this, checked);
+            }
+        });
     }
 
     private void configurePersistence() {
@@ -247,6 +259,11 @@ public class SettingsActivity extends AppCompatActivity {
         persist(txtGlassesLang, new Saver() {
             @Override public void save(String value) {
                 Prefs.setTranscribeGlassesLang(SettingsActivity.this, value.trim());
+            }
+        });
+        persist(txtTranslateTarget, new Saver() {
+            @Override public void save(String value) {
+                Prefs.setTranslateTarget(SettingsActivity.this, value.trim());
             }
         });
         persist(txtSystemPrompt, new Saver() {

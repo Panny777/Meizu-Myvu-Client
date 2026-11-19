@@ -7,6 +7,7 @@ import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
 import com.myvu.client.protocol.Pb;
+import com.myvu.client.transcribe.Languages;
 import com.myvu.client.transcribe.TranscribeProtocol;
 
 import org.json.JSONObject;
@@ -70,7 +71,9 @@ public class TranscribeProtocolTest {
     @Test
     public void openSceneMatchesTheCapturedLauncherRequest() throws Exception {
         JSONObject m = new JSONObject(TranscribeProtocol.openScene(
-                TranscribeProtocol.Peer.TRANSLATE, "en", "en", 4));
+                TranscribeProtocol.Peer.TRANSLATE, "en", "en",
+                TranscribeProtocol.SUBTITLE_TRANSLATION_ONLY,
+                TranscribeProtocol.TRANS_TYPE_TRANSCRIBE));
         assertEquals("app", m.getString("action"));
 
         JSONObject data = m.getJSONObject("data");
@@ -99,7 +102,8 @@ public class TranscribeProtocolTest {
      */
     @Test
     public void startTransMatchesTheCapturedPayload() throws Exception {
-        JSONObject m = new JSONObject(TranscribeProtocol.startTrans("en", "en"));
+        JSONObject m = new JSONObject(TranscribeProtocol.startTrans(
+                "en", "en", TranscribeProtocol.TRANS_TYPE_TRANSCRIBE));
         assertEquals(61, m.getInt("msgCmd"));
         JSONObject data = new JSONObject(m.getString("data"));
         assertEquals(1, data.getInt("transType"));
@@ -112,11 +116,11 @@ public class TranscribeProtocolTest {
         assertEquals(7, data.length());
 
         // 60 is the same payload under a different command.
-        assertEquals(data.toString().length(),
-                new JSONObject(new JSONObject(TranscribeProtocol.languageSet("en", "en"))
-                        .getString("data")).toString().length());
-        assertEquals(60, new JSONObject(
-                TranscribeProtocol.languageSet("en", "en")).getInt("msgCmd"));
+        JSONObject langSet = new JSONObject(TranscribeProtocol.languageSet(
+                "en", "en", TranscribeProtocol.TRANS_TYPE_TRANSCRIBE));
+        assertEquals(60, langSet.getInt("msgCmd"));
+        assertEquals(data.length(),
+                new JSONObject(langSet.getString("data")).length());
     }
 
     @Test
@@ -244,6 +248,36 @@ public class TranscribeProtocolTest {
         // The glasses-side name must NOT resolve through the launch form.
         assertNull(TranscribeProtocol.Peer.forLaunchAppId(
                 "com.upuphone.ar.translation.glasses"));
+    }
+
+    /**
+     * The firmware takes a short vendor list and nothing else. "zh" or "en-US"
+     * are accepted silently and then label the subtitle wrongly, so an
+     * unsupported target has to be caught before the session starts.
+     */
+    @Test
+    public void onlyTheFirmwaresOwnLanguageCodesAreAccepted() {
+        assertTrue(Languages.isSupported("en"));
+        assertTrue(Languages.isSupported("cn"));
+        assertTrue(Languages.isSupported("ja"));
+
+        assertFalse(Languages.isSupported("zh"));
+        assertFalse(Languages.isSupported("en-US"));
+        assertFalse(Languages.isSupported(""));
+        assertFalse(Languages.isSupported(null));
+    }
+
+    /**
+     * The names feed a prompt, so an unknown code must not silently become a
+     * language -- that would translate into something nobody asked for.
+     */
+    @Test
+    public void languageNamesAreSpelledOutForThePromptAndNeverGuessed() {
+        assertEquals("Simplified Chinese", Languages.nameOf("cn"));
+        assertEquals("Japanese", Languages.nameOf("ja"));
+        // The vendor's mixed cn+en recognition mode; only English as a target.
+        assertEquals("English", Languages.nameOf("cnen"));
+        assertEquals("kl", Languages.nameOf("kl"));
     }
 
     @Test

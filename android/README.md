@@ -20,7 +20,9 @@ Package `com.myvu.client`. Java, no Kotlin. `minSdk 26`, tested on API 31.
 - **AI assistant** — glasses mic → selectable Groq or local STT → Claude,
   ChatGPT, Gemini, or a local OpenAI-compatible LLM → selectable device or HTTP TTS.
 - **Live captions** — the glasses' subtitle scene, driven by Deepgram streaming
-  speech-to-text instead of the vendor cloud.
+  speech-to-text instead of the vendor cloud, startable from either end.
+  Optionally **translated**, adding a second subtitle line via the configured
+  AI provider.
 
 ## Architecture
 
@@ -230,8 +232,37 @@ after `msgCmd 7` so closing the scene cannot immediately reopen it.
 
 Configure it in **Settings → Live captions**: a Deepgram API key, model
 (`nova-3`), and language (`en`, or `multi` on nova-3 for mixed speech). The
-"language told to the glasses" is separate and only affects the lens UI — the
-firmware accepts `en`, `cn`, `cnen`, `ja` and nothing else.
+"spoken language, told to the glasses" is separate and only affects the lens UI
+— the firmware takes its own short list and nothing else: `en`, `cn`, `cnen`,
+`ja`, `ko`, `fr`, `de`, `es`, `it`, `ru`, `vi`, `th`, `ar`. Sending `zh` or
+`en-US` is accepted silently and then labels the subtitle wrongly, so an
+unsupported code is rejected before the session starts.
+
+### Live translation
+
+Turning on **Translate captions** adds a translated second line under each
+finished caption, using the `dst` half of the same result frame:
+
+```json
+{"dst":{"content":"<translated>","finalSrc":"<the recognised original>", …}}
+```
+
+`src` and `dst` never share a frame — `AsrResultExtKt` builds one or the other
+and nulls the rest — so the translation is a second msgCmd 53 carrying the
+original's timestamps, which is how the lens pairs them. `subtitleSetType:4`
+(`OTHER_SIDE_SUBTITLE_TRANSLATION_SHOW`) is what renders both lines.
+
+Deepgram transcribes but does not translate, so this reuses whichever **AI
+provider** the assistant is already configured with — it needs that key as well
+as the speech one, which is why it is off by default.
+
+Only **final** lines are translated, never partials. A partial changes several
+times a second; translating each would cost a request per few words and arrive
+out of order anyway. The original appears live and the translation lands a
+moment behind it, which is also how the vendor's own `dst` frames behave.
+Requests run on one thread so lines reach the lens in the order they were
+spoken — a slow request delays the ones behind it, which is the right trade,
+since out-of-order subtitles read as gibberish.
 
 **Glasses-side app** picks which scene to open. *Translator* is the default
 because it ships on international firmware and is what the reference capture

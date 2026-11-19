@@ -321,6 +321,12 @@
                             android:layout_width="match_parent" android:layout_height="wrap_content"
                             android:layout_marginTop="6dp" android:minLines="2" android:maxLines="4"
                             android:textSize="15sp" android:text="" />
+                        <TextView
+                            android:id="@+id/txtCaptionTranslated"
+                            android:layout_width="match_parent" android:layout_height="wrap_content"
+                            android:layout_marginTop="2dp" android:maxLines="3"
+                            android:textSize="15sp" android:textStyle="italic"
+                            android:visibility="gone" android:text="" />
 
                         <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
                             android:orientation="horizontal" android:layout_marginTop="8dp">

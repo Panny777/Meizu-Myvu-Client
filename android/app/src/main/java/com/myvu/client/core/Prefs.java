@@ -27,7 +27,8 @@ public final class Prefs {
     private static final String KEY_DEEPGRAM_LANGUAGE = "deepgram_language";
     private static final String KEY_TRANSCRIBE_PEER = "transcribe_peer";
     private static final String KEY_TRANSCRIBE_GLASSES_LANG = "transcribe_glasses_lang";
-    private static final String KEY_TRANSCRIBE_SUBTITLE_SET = "transcribe_subtitle_set";
+    private static final String KEY_TRANSLATE_ENABLED = "transcribe_translate_enabled";
+    private static final String KEY_TRANSLATE_TARGET = "transcribe_translate_target";
 
     // An empty field selects discovery. A developer's sample device address
     // would otherwise bypass scanning and time out for every new installation.
@@ -319,13 +320,28 @@ public final class Prefs {
         prefs(c).edit().putString(KEY_TRANSCRIBE_GLASSES_LANG, lang).apply();
     }
 
-    /** See TranscribeProtocol.SUBTITLE_*; 4 is what the vendor app sends. */
-    public static int transcribeSubtitleSet(Context c) {
-        return prefs(c).getInt(KEY_TRANSCRIBE_SUBTITLE_SET, 4);
+    /**
+     * Whether to translate captions as well as transcribe them.
+     *
+     * Off by default: it needs an LLM provider configured on top of Deepgram,
+     * and turning it on silently would make captioning fail for anyone who has
+     * only set up the speech key.
+     */
+    public static boolean translateEnabled(Context c) {
+        return prefs(c).getBoolean(KEY_TRANSLATE_ENABLED, false);
     }
 
-    public static void setTranscribeSubtitleSet(Context c, int type) {
-        prefs(c).edit().putInt(KEY_TRANSCRIBE_SUBTITLE_SET, type).apply();
+    public static void setTranslateEnabled(Context c, boolean enabled) {
+        prefs(c).edit().putBoolean(KEY_TRANSLATE_ENABLED, enabled).apply();
+    }
+
+    /** Target language, as a code the GLASSES accept -- see Languages. */
+    public static String translateTarget(Context c) {
+        return nonEmpty(prefs(c).getString(KEY_TRANSLATE_TARGET, ""), "cn");
+    }
+
+    public static void setTranslateTarget(Context c, String code) {
+        prefs(c).edit().putString(KEY_TRANSLATE_TARGET, code).apply();
     }
 
     private static String nonEmpty(String value, String fallback) {

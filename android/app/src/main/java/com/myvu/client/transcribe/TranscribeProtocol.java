@@ -107,6 +107,40 @@ public final class TranscribeProtocol {
 
     public static final String PKG_LAUNCHER = "com.upuphone.star.launcher";
 
+    /**
+     * The translator's "early" package -- a second, always-on phone-side
+     * identity, separate from the session peer.
+     *
+     * {@code EarlyInterConnectHelper} registers it at app start, independently
+     * of any session, and announces the translator to the LAUNCHER whenever a
+     * device connects. It is how the phone says "a translator companion lives
+     * here" before any scene exists.
+     */
+    public static final String PKG_TRANSLATION_EARLY =
+            "com.upuphone.ar.translation.phone.early";
+
+    /**
+     * The announcement itself, sent on every connect.
+     *
+     * Despite the name it is not about a phone call: {@code status 0} is the
+     * idle call state, and the vendor re-sends it whenever that changes. Its
+     * side effect is registering the translator's presence with the launcher,
+     * which is the part we need -- our init burst never carried it, and the
+     * launcher had no reason to believe this phone could translate anything.
+     */
+    public static String translatorPresence(int callState) {
+        try {
+            return new JSONObject()
+                    .put("action", "translator")
+                    .put("data", new JSONObject()
+                            .put("action", "telephone_notification")
+                            .put("status", callState))
+                    .toString();
+        } catch (JSONException e) {
+            throw new IllegalStateException(e);
+        }
+    }
+
     // ------------------------------------------------- glasses -> phone cmds
 
     /** The glasses' own start button. Carries a StartTrans payload. */
@@ -173,13 +207,46 @@ public final class TranscribeProtocol {
     public static final int REC_STOP = 3;
     public static final int REC_RELEASE = 4;
 
-    /** Plain captioning. 4 is the two-party dialogue mode, which we do not do. */
+    /**
+     * Plain captioning: one subtitle line of what was said. Both twins agree on
+     * this value ({@code TranscribeType.TRANSCRIBE} / {@code TranslationType.TRANSCRIBE}).
+     */
     public static final int TRANS_TYPE_TRANSCRIBE = 1;
 
-    public static final int SUBTITLE_MY_HIDE = 1;
-    public static final int SUBTITLE_MY_ORIGINAL_SHOW = 2;
-    public static final int SUBTITLE_OTHER_SHOW = 3;
-    public static final int SUBTITLE_OTHER_TRANSLATION_SHOW = 4;
+    /**
+     * Simultaneous interpretation -- the vendor's native translated-subtitle
+     * mode. NOT USED: see the note in TranscribeSession. Kept because it is the
+     * documented value and the starting point for finishing that work.
+     *
+     * {@link Peer#TRANSLATE} ONLY. The transcribe twin's enum has no value 2;
+     * its 4 is dialogue transcription, not this. Opening the scene as
+     * TRANSCRIBE and then sending it {@code dst} frames gets exactly what you
+     * would expect: a scene with no translation UI, sitting on its loading
+     * screen while perfectly good translations arrive and are dropped.
+     */
+    public static final int TRANS_TYPE_SIMUL_INTERPRET = 2;
+
+    /**
+     * Subtitle modes -- RENUMBERED BETWEEN THE TWINS, so the names below are
+     * the translation twin's, which is the one we drive:
+     *
+     * <pre>
+     *   value  translation (SubtitleSetTypeAnno)  transcribe (SubtitleSetType)
+     *   1      PROXIMAL_HIDE                      MY_SUBTITLE_HIDE
+     *   2      PROXIMAL_ORIGINAL_SHOW             MY_SUBTITLE_ORIGINAL_SHOW
+     *   3      REMOTE_ORIGINAL_TRANSLATE_SHOW     OTHER_SIDE_SUBTITLE_SHOW
+     *   4      REMOTE_TRANSLATE_SHOW              OTHER_SIDE_SUBTITLE_TRANSLATION_SHOW
+     * </pre>
+     *
+     * Note 3 and 4 mean nearly opposite things across the two: on the
+     * translation side 4 is translation ONLY and 3 is both lines.
+     */
+    public static final int SUBTITLE_PROXIMAL_HIDE = 1;
+    public static final int SUBTITLE_PROXIMAL_ORIGINAL_SHOW = 2;
+    /** Original above, translation below. */
+    public static final int SUBTITLE_ORIGINAL_AND_TRANSLATION = 3;
+    /** Translation only -- and what the vendor sends for plain transcription. */
+    public static final int SUBTITLE_TRANSLATION_ONLY = 4;
 
     public static final int SUBTITLE_SIZE_SMALL = 1;
     public static final int SUBTITLE_SIZE_MIDDLE = 2;
@@ -221,13 +288,13 @@ public final class TranscribeProtocol {
      * asked us anything.
      */
     public static String openScene(Peer peer, String srcLang, String dstLang,
-                                   int subtitleSetType) {
+                                   int subtitleSetType, int transType) {
         try {
             // Field-for-field what the vendor sends. Notably NO subtitleSizeType
             // -- the size lives on msgCmd 57, and an unexpected key here is not
             // worth the risk on a scene we cannot debug from the inside.
             String ext = new JSONObject()
-                    .put("transType", TRANS_TYPE_TRANSCRIBE)
+                    .put("transType", transType)
                     .put("src", srcLang)
                     .put("dst", dstLang)
                     .put("subtitleSetType", subtitleSetType)
@@ -266,18 +333,18 @@ public final class TranscribeProtocol {
     }
 
     /** msgCmd 61 -- "start now"; 60 -- "these are the languages". Same payload. */
-    public static String startTrans(String srcLang, String dstLang) {
-        return message(P2G_TRANS_START, startTransPayload(srcLang, dstLang));
+    public static String startTrans(String srcLang, String dstLang, int transType) {
+        return message(P2G_TRANS_START, startTransPayload(srcLang, dstLang, transType));
     }
 
-    public static String languageSet(String srcLang, String dstLang) {
-        return message(P2G_LANGUAGE_SET, startTransPayload(srcLang, dstLang));
+    public static String languageSet(String srcLang, String dstLang, int transType) {
+        return message(P2G_LANGUAGE_SET, startTransPayload(srcLang, dstLang, transType));
     }
 
-    private static String startTransPayload(String srcLang, String dstLang) {
+    private static String startTransPayload(String srcLang, String dstLang, int transType) {
         try {
             return new JSONObject()
-                    .put("transType", TRANS_TYPE_TRANSCRIBE)
+                    .put("transType", transType)
                     .put("src", srcLang)
                     .put("dst", dstLang)
                     // False: the glasses use this to decide whether the phone is

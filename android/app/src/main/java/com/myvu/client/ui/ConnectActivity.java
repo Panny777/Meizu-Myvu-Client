@@ -60,7 +60,8 @@ public class ConnectActivity extends AppCompatActivity implements LogBus.Listene
 
     private TextInputEditText txtMac, txtNotifyTitle, txtNotifyBody, txtAsk,
             txtTici, txtDest;
-    private TextView txtStatus, txtGlasses, txtCaption, txtCaptionStatus;
+    private TextView txtStatus, txtGlasses, txtCaption, txtCaptionStatus,
+            txtCaptionTranslated;
     private View statusDot;
     private View progress;
     private RecyclerView rvLog;
@@ -107,7 +108,11 @@ public class ConnectActivity extends AppCompatActivity implements LogBus.Listene
             runOnUiThread(new Runnable() {
                 @Override public void run() {
                     txtCaptionStatus.setText(status);
-                    if (!running) txtCaption.setText("");
+                    if (!running) {
+                        txtCaption.setText("");
+                        txtCaptionTranslated.setText("");
+                        txtCaptionTranslated.setVisibility(View.GONE);
+                    }
                 }
             });
         }
@@ -116,6 +121,16 @@ public class ConnectActivity extends AppCompatActivity implements LogBus.Listene
         public void onCaption(final String text, boolean isFinal) {
             runOnUiThread(new Runnable() {
                 @Override public void run() { txtCaption.setText(text); }
+            });
+        }
+
+        @Override
+        public void onTranslation(String original, final String translated) {
+            runOnUiThread(new Runnable() {
+                @Override public void run() {
+                    txtCaptionTranslated.setText(translated);
+                    txtCaptionTranslated.setVisibility(View.VISIBLE);
+                }
             });
         }
     };
@@ -137,6 +152,7 @@ public class ConnectActivity extends AppCompatActivity implements LogBus.Listene
         txtGlasses = findViewById(R.id.txtGlasses);
         txtCaption = findViewById(R.id.txtCaption);
         txtCaptionStatus = findViewById(R.id.txtCaptionStatus);
+        txtCaptionTranslated = findViewById(R.id.txtCaptionTranslated);
         statusDot = findViewById(R.id.statusDot);
         progress = findViewById(R.id.progress);
         rvLog = findViewById(R.id.rvLog);

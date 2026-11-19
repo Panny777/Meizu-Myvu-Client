@@ -961,6 +961,13 @@ public class ConnectionManager implements BleTransport.Listener, RelaySupervisor
         try {
             sendActionNow(ClockSync.build());
             sendActionNow(SystemSettings.setZenMode(false));
+            // Announces the translator companion to the launcher, from the
+            // vendor's second "early" identity. The official app sends this on
+            // every connect from EarlyInterConnectHelper -- long before any
+            // captioning session -- and our init burst never carried it.
+            sendActionNow(TranscribeProtocol.translatorPresence(0),
+                    TranscribeProtocol.PKG_LAUNCHER,
+                    TranscribeProtocol.PKG_TRANSLATION_EARLY);
         } catch (Exception e) {
             LogBus.error("could not apply the default settings", e);
         }
